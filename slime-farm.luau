@@ -20,13 +20,13 @@ if env.SlimeFarm and env.SlimeFarm.stop then env.SlimeFarm.stop() end
 local farm: any = {
     enabled = true, collect = true, attacks = 0, kills = 0,
     flowers = 0, shinies = 0, target = nil, lastError = nil,
-    mode = "starting", height = -12, hubReturns = 0, autoHub = false,
+    mode = "starting", height = -12, hubReturns = 0, autoHub = true,
     undergroundOnly = true,
     antiAfk = true, antiAfkEvents = 0, antiAfkError = nil
 }
 env.SlimeFarm = farm
 local undergroundOK = pcall(function()
-    local factory=assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/cc065b7f1cc0adecc3b590c45c91e8a7dcf2daeb/underground.luau")))()
+    local factory=assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/e4421568ce54882bdb975690409de53649f88b9b/underground.luau")))()
     farm.underground=factory(farm,config)
 end)
 if not undergroundOK then farm.undergroundError="Underground guard unavailable; farming blocked" end
@@ -58,11 +58,46 @@ local function inHub(position)
         and math.abs(relative.Z) <= half.Z + 40
         and math.abs(relative.Y) <= 160
 end
-local function returnToHub(root, _now)
-    if inHub(root.Position) then return true end
+local portal=nil
+local portalScanAt=-10
+local portalStartedAt=0
+local returningToHub=false
+local function returnToHub(root, now)
+    if inHub(root.Position) then
+        if returningToHub then farm.hubReturns+=1;farm.target=nil;collection=nil end
+        returningToHub=false
+        portal=nil
+        return true
+    end
     farm.target = nil
     collection = nil
-    farm.mode = "Waiting for HUB; surface portal travel blocked"
+    returningToHub=true
+    farm.mode="Finding HUB portal"
+    if not farm.autoHub then return false end
+    if now-portalScanAt>=0.5 or not portal or not portal:IsDescendantOf(workspace) then
+        portalScanAt=now
+        local distance=math.huge
+        portal=nil
+        for _,island in ipairs(workspace:GetChildren()) do
+            if typeof(island:GetAttribute("IslandOrigin"))=="Vector3" then
+                for _,candidate in ipairs(island:GetChildren()) do
+                    if candidate.Name=="HUB" or candidate:GetAttribute("PortalRotation")~=nil then
+                        local touch=candidate:FindFirstChild("TouchPart",true)
+                        if touch and touch:IsA("BasePart") then
+                            local d=(touch.Position-root.Position).Magnitude
+                            if d<distance then portal,distance=touch,d end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    if portal and not root.Anchored and farm.underground then
+        farm.mode="Entering HUB portal"
+        if now-portalStartedAt>4 then portalStartedAt=now end
+        local offset=if now-portalStartedAt<0.15 then portal.CFrame.LookVector*6 else Vector3.zero
+        farm.underground.portalTouch(root,portal,offset)
+    end
     return false
 end
 local function connect(signal, callback)
@@ -339,7 +374,7 @@ connect(RunService.Heartbeat, function()
         end
     end
 end)
-print("Strict underground farm: surface portal/transfer travel blocked; interactions attempted from below. F6 all; F7 collection.")
+print("Automatic farm: HUB portal recovery, below-terrain farming, alt resource savings. F6 all; F7 collection.")
 
 
 
