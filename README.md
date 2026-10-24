@@ -21,7 +21,9 @@ On RobotTifaski, open **Transfers**, click **Refresh connected alts**, select an
 - **Farm loot:** slime gels, shinies, and flowers.
 - **All backpack items:** all inventory stacks, including spare equipment, blocks, seeds, and machines. Starter tools are retained. Items refused by the server stop the transfer with an error, leaving the remaining inventory intact.
 
-The main account goes home and waits. The selected alt visits the main island, pauses farming, and drops one item at a time. Each drop waits for an inventory acknowledgement, and dropping stops if the receiver disconnects or the transfer is cancelled. The main collects nearby loose items, acknowledges receipt, and both clients resume their previous farming setting. Only one transfer runs at a time. Transfers do not start automatically.
+The main account goes home and waits. The selected alt visits the main island, pauses farming, and drops one item at a time. Each drop waits for an inventory acknowledgement, and dropping stops if the receiver disconnects or the transfer is cancelled. The main collects nearby loose items, acknowledges receipt, and both clients resume their previous farming setting. Only one transfer runs at a time.
+
+Automatic transfer rounds are enabled by default, with **15 minutes between rounds**. RobotTifaski queues every connected alt and transfers **All backpack items**, regardless of the manual transfer selector. After the last queued alt finishes, the next 15-minute farming period begins. Adjust the interval in the Transfers tab, or disable automatic transfers with its toggle. The enabled setting and interval are saved in Real's shared workspace; the countdown starts again when the main account reloads the script. Cancelling clears the current round's queue and restarts the interval; it does not disable future rounds. The main client must remain connected and running the script.
 
 The **Cancel transfer** button stops further drops; already dropped items remain on the island. The game's player-drop pickup policy allows anyone to pick up dropped items, so the transfer is not an atomic trade. The script does not change island permissions.
 

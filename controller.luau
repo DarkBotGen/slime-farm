@@ -13,6 +13,7 @@ return function(farm, context)
     local clientPath = prefix .. "client-" .. player.UserId .. ".json"
     local mainPath = prefix .. "client-" .. mainId .. ".json"
     local requestPath = prefix .. "request.json"
+    local settingsPath = "slime-farm-control/auto-transfer-" .. mainId .. ".json"
     local session = Http:GenerateGUID(false)
     local inventory, inventoryReady = {}, false
     local connections, active, gui = {}, nil, nil
@@ -29,6 +30,39 @@ return function(farm, context)
     end
     local function write(path, value)
         writefile(path, Http:JSONEncode(value))
+    end
+    local settings = read(settingsPath) or {}
+    local savedInterval = tonumber(settings.intervalMinutes) or 15
+    local auto = {
+        enabled = isMain and settings.enabled ~= false,
+        intervalMinutes = math.clamp(savedInterval, 1, 1440),
+        queue = {}, roundRunning = false, lastResult = "No round yet",
+    }
+    auto.nextAt = os.time() + math.floor(auto.intervalMinutes * 60)
+    control.auto = auto
+    local function saveAuto()
+        if isMain then
+            write(settingsPath, {enabled=auto.enabled, intervalMinutes=auto.intervalMinutes})
+        end
+    end
+    function control.setAutoEnabled(enabled)
+        auto.enabled = isMain and enabled == true
+        if not auto.enabled then
+            table.clear(auto.queue)
+            auto.roundRunning = false
+        end
+        auto.nextAt = os.time() + math.floor(auto.intervalMinutes * 60)
+        saveAuto()
+    end
+    function control.setAutoInterval(value)
+        local minutes = tonumber(value)
+        if not minutes or minutes < 1 or minutes > 1440 then
+            return false, "Enter a transfer interval between 1 and 1440 minutes"
+        end
+        auto.intervalMinutes = minutes
+        auto.nextAt = os.time() + math.floor(minutes * 60)
+        saveAuto()
+        return true
     end
     local function snapshot()
         local copy = {}
@@ -98,6 +132,9 @@ return function(farm, context)
         farm.target = nil
     end
     function control.cancel()
+        table.clear(auto.queue)
+        auto.roundRunning = false
+        auto.nextAt = os.time() + math.floor(auto.intervalMinutes * 60)
         if active and isMain then
             active.request.cancelled = true
             write(requestPath, active.request)
@@ -141,6 +178,36 @@ return function(farm, context)
         control.status = "Going home; waiting for " .. account.Name
         write(requestPath, request)
         return true
+    end
+    function control.runAutoRound()
+        if not isMain then return false, "Only the main account schedules transfers" end
+        if active or auto.roundRunning then return false, "A transfer round is already running" end
+        local names = control.listAlts()
+        auto.queue = names
+        auto.roundRunning = #names > 0
+        auto.nextAt = os.time() + math.floor(auto.intervalMinutes * 60)
+        if #names == 0 then
+            auto.lastResult = "No connected alts; waiting for the next interval"
+            return false, auto.lastResult
+        end
+        auto.lastResult = "Round started: " .. #names .. " connected alts"
+        return true
+    end
+    local function automaticTransfers()
+        if not isMain or not inventoryReady or active then return end
+        if auto.roundRunning then
+            if #auto.queue > 0 then
+                local name = table.remove(auto.queue, 1)
+                local ok, message = control.requestTransfer(name, "All backpack items")
+                if not ok then auto.lastResult = name .. ": " .. tostring(message) end
+            else
+                auto.roundRunning = false
+                auto.nextAt = os.time() + math.floor(auto.intervalMinutes * 60)
+                auto.lastResult = "Round complete; farming until the next interval"
+            end
+        elseif auto.enabled and os.time() >= auto.nextAt then
+            control.runAutoRound()
+        end
     end
     table.insert(connections, R.get(R.InventoryChanged).OnClientEvent:Connect(function(a1, _, _, _, _, _, a7)
         if type(a1) == "table" then
@@ -303,6 +370,7 @@ return function(farm, context)
                     farm.transferBusy=true
                 end
             end
+            automaticTransfers()
             if active then
                 if now-active.started>1800 then finish("error","Transfer timed out; remaining items kept")
                 elseif isMain then mainStep(root,now) else altStep(root,now) end

@@ -39,13 +39,38 @@ return function(farm, control)
         transfer:CreateParagraph({Title="Alt receiver enabled",Text="Select " .. player.Name .. " in RobotTifaski's Transfers tab to start. This account will pause farming, visit the main island, and transfer its selected inventory."})
     end
     transfer:CreateButton({Name="Cancel transfer",Callback=control.cancel})
+    if control.isMain then
+        transfer:CreateToggle({Name="Automatic transfers from all alts",Description="Processes connected alts one at a time, then resumes farming.",CurrentValue=control.auto.enabled,Callback=function(value)control.setAutoEnabled(value)end})
+        transfer:CreateInput({Name="Minutes between transfer rounds",Description="All backpack items are transferred. Saved for this main account.",CurrentValue=tostring(control.auto.intervalMinutes),PlaceholderText="15",Numeric=true,Enter=true,ClearTextAfterFocusLost=false,Callback=function(value)
+            local ok,message=control.setAutoInterval(value)
+            if not ok then control.status=message end
+        end})
+        transfer:CreateButton({Name="Transfer all connected alts now",Callback=function()
+            local ok,message=control.runAutoRound()
+            if not ok then control.status=message end
+        end})
+    end
     local status=transfer:CreateParagraph({Title="Transfer status",Text="Idle"})
+    local schedule=transfer:CreateParagraph({Title="Automatic transfer schedule",Text="Starting..."})
     tab:CreateButton({Name="Stop script and close GUI",Callback=farm.stop})
     local api={}
     function api.update()
         local count,ready=control.getInventorySummary()
         stats:Set({Title="Live status",Text=string.format("%s\nSlimes: %d | Flowers: %d | Shinies: %d\nInventory: %d%s | Anti-AFK events: %d",farm.mode,farm.kills,farm.flowers,farm.shinies,count,ready and "" or " (syncing)",farm.antiAfkEvents or 0)})
         status:Set({Title="Transfer status",Text=control.status})
+        if control.isMain then
+            local auto=control.auto
+            local seconds=math.max(0,auto.nextAt-os.time())
+            local text
+            if auto.roundRunning then
+                text="Round running | Alts remaining in queue: " .. #auto.queue
+            elseif auto.enabled then
+                text=string.format("Next round in %dm %02ds | Interval: %g minutes",math.floor(seconds/60),seconds%60,auto.intervalMinutes)
+            else text="Automatic transfers disabled" end
+            schedule:Set({Title="Automatic transfer schedule",Text=text .. "\n" .. auto.lastResult})
+        else
+            schedule:Set({Title="Automatic transfer schedule",Text="RobotTifaski controls the timer. This account transfers when selected by the scheduled round, then resumes farming."})
+        end
     end
     function api.destroy()Luna:Destroy()end
     control.attachGUI(api)
