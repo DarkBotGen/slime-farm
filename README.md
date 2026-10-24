@@ -1,59 +1,45 @@
 # Slime farm
 
-Two tabs only: **Autofarm** and **Transfer**.
+Two tabs: **Autofarm** and **Transfer**. The current version walks above ground.
 
 ```lua
 loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/main/slime-farm.luau"))()
 ```
 
-## Autofarm
+## Walking and combat
 
-### Strict underground movement
+The character follows Roblox PathfindingService waypoints with Humanoid:MoveTo(), using normal jump waypoints and replanning when a path is blocked, a target moves, or movement stalls. There is one path computation in flight per client, with an 0.8-second minimum between computations. Unreachable targets are retried later.
 
-The current loader enables a below-terrain movement guard with a minimum four-stud root offset, increased for tall avatars/accessories. It uses mapped terrain and downward floor probes, stays upright, zeros velocity, and corrects positions on PreSimulation and Heartbeat. New characters are checked as their root appears; server-anchored characters cannot be moved until released. Pausing no longer returns the character to its original surface position, and idle characters are held below the mapped floor.
+Sprinting uses the game's InputController.toggleSprintButton(), which sends the game's normal server-validated sprint request. The script does not change WalkSpeed, jump power, character position, velocity, or collisions. It does not load the underground guard. Normal player movement controls are suspended while following the route and restored on pause or stop.
 
-Automatic HUB portal recovery is enabled. Outside HUB, the controller finds the nearest streamed island HUB trigger and permits movement in that trigger area for at most 0.25 seconds per refresh. This temporary exception expires away from the portal, so underground positioning resumes on arrival. This is a deliberate surface-travel exception. Chest-transfer travel and above-ground shiny/flower visits remain blocked. Fresh accounts can start on their island, enter HUB automatically, equip their starter sword, and begin farming. Pickups are attempted from below; rejected interactions are skipped/retried. Server attack and interaction ranges still apply, so greater depth can reduce or stop farming. Unknown terrain blocks scripted movement. Transfer controls report that strict mode blocks transfers.
+Slime priority remains orange > pink > blue > green. The starter weapon is selected automatically. Attacks require the equipped sword's configured range and line of sight, follow AnimationController.playSwing(), and respect its readiness plus the configured weapon cooldown. Delayed hits recheck the current target, range, and line of sight before sending a request. It no longer sends attacks every frame.
 
-This constrains the farm's own movement; it cannot prevent or conceal a server-controlled spawn, teleport, correction, or respawn. It is not invisibility, report prevention, or ban protection. The portal fix was verified on a fresh account: it left its island, reached HUB, equipped WoodSword, and recorded kills. The retained transfer implementation is blocked in this mode.
+Outside HUB, the script walks to the nearest streamed island HUB portal and lets the game's portal perform travel. It never moves the character directly to the trigger. Respawned characters are picked up automatically. If the previous script left a character underground, start from a normal above-ground respawn; this version will not reposition it out of the terrain.
 
-Toggle farming in the Autofarm tab. Strict below-terrain movement keeps orange > pink > blue > green priority, event-driven target switching and built-in anti-AFK. HUB portal travel is automatic; shiny/flower collection is attempted from below. Server damage cooldowns and range limits still apply.
+Nearby shinies and mature flowers are reached on foot between slime targets. Interactions are sent only within ordinary interaction distance and with line of sight. F6 pauses farming and releases movement controls; F7 toggles collection. Built-in idle handling remains enabled.
 
-## Manual transfer
+## Transfer
 
-Strict underground mode currently blocks transfers before any travel begins. The existing chest-transfer implementation is retained for future changes; the steps below describe that implementation, not an action available in strict mode. There are **no automatic transfer timers, schedules, or saved scheduling settings**.
-
-1. Join RobotTifaski and your alts to the same Roblox server.
-2. Run the script on each participating account in the same Real workspace.
-3. On RobotTifaski, open Transfer and press **TRANSFER ALL ALTS TO MAIN**.
-
-The connected alts visit RobotTifaski's island and deposit whole stacks into its Large Chest. RobotTifaski automatically uses the chest's collect-all action throughout the transfer, moving the items into the main backpack and freeing chest space.
-
-Deposits prioritize orange gels, pink gels, blue gels, green gels, then remaining items. Weapons and tools (including buckets, plows, watering cans, and pollinators) remain on the alts. Each alt verifies its remaining eligible inventory and resumes farming independently after its deposits have been collected. No items are dropped on the ground.
-
-The main script grants participating alts Trusted Builder and full available island/storage permissions during transfer setup. A Large Chest must be placed on the main island. The vending machine is not used or modified. Blocked deposits wait/retry; Cancel stops further transfers. Items already collected stay in the main backpack, and anything still in the chest remains there until collected.
-
-The main account is RobotTifaski, user ID 1407091060. Coordination requires the same server and shared local Real workspace; it does not control accounts on other computers.
-
-## Discord gel rates
-
-Optional reporting reads `slime-farm-webhook/settings.json` from the local Real workspace. Keep credentials out of this repository. Settings use `enabled`, `url`, and `intervalSeconds` (minimum 60). All participating accounts must use the same Real workspace; they can farm in different servers. One elected account updates one Discord message with combined pink, blue, green, and orange gels per hour, plus estimated sale value per hour. Prices: pink 40,000, blue 1,500, green 1,500, orange 10,000 coins each. These are user-supplied estimates, not actual sale receipts.
-
-For the dark PNG dashboard, run the local `SlimeChartRenderer.exe` once on the shared computer. It listens only on `127.0.0.1:17384`, draws a chart once per report, and receives only numeric yield data. It never reads webhook credentials. Charts show one-minute samples scaled to hourly yields; summary cards show the rolling average. The four gel charts and total estimated sale-value chart replace the previous image in the same Discord message. Without the helper, text rates and sale estimates still update. No third-party chart provider is used. Restart the helper after restarting Windows; it does not install a startup task.
-
-Build the helper from `SlimeChartRenderer.cs` using the Windows .NET Framework C# compiler with references to `System.Drawing.dll` and `System.Web.Extensions.dll`, target `winexe`.
-
-The report uses a rolling hour of positive inventory gains while farming inside HUB, excluding paused farming and chest transfers. Existing inventory is the baseline, not earnings. During the first hour, the observed session rate is extrapolated. Measurements survive reloads/rejoins locally. This measures observed farming gains; manually receiving gels while actively farming in HUB also counts. New computers require their own local settings.
+Transfer travel is disabled in walking mode, and the GUI explains this. The retained legacy chest-transfer implementation is blocked before either its travel step or group-transfer request can run. There are no scheduled transfers.
 
 ## Alt resource savings
 
-All accounts except RobotTifaski (immutable user ID 1407091060) use alt performance mode: 3D rendering off, 30 FPS cap, lowest engine quality, shadows and visual effects disabled, texture references cleared where writable, and existing/new workspace sounds muted. Existing and newly streamed visual instances are handled without repeated full-world scans. Gameplay parts, meshes, remotes, prompts, scripts, and streaming remain intact. The main-account guard runs before any graphics or FPS change.
+RobotTifaski (user ID 1407091060) is excluded before any graphics or FPS change. Other accounts use 3D rendering off, a 30 FPS cap, low engine quality, reduced textures/effects/shadows, and muted workspace audio. Rendering changes leave gameplay instances, normal character physics, and pathfinding intact. These changes cannot purge Roblox's asset cache or alter Studio-only streaming settings.
 
-Stopping the whole farm with `getgenv().SlimeFarm.stop()` restores settings modified by performance mode. `getgenv().SlimeFarm.performance.stop()` restores graphics while leaving farming running. Reloading the farm reapplies alt mode. The Autofarm toggle pauses farming while keeping resource savings enabled. The GUI still has only Autofarm and Transfer tabs.
+Stop all farming with getgenv().SlimeFarm.stop(). To restore an alt's graphics while leaving farming running, use getgenv().SlimeFarm.performance.stop().
 
-The 30 FPS cap reduces attack requests to roughly 30 per second, while actual hits remain server limited. It was verified that an optimized live alt continued killing slimes. This primarily reduces graphics/rendering work; the script cannot purge Roblox's asset cache or change the game's Studio-only streaming settings, and it does not claim a fixed RAM reduction.
+## Discord reporting
+
+Local Real workspace settings are in slime-farm-webhook/settings.json, with enabled, url, and intervalSeconds (minimum 60). Credentials must stay out of this repository. Participating accounts share one Real workspace and can be in different servers. A single elected reporter updates one Discord message with combined pink, blue, green, and orange gel rates and estimated sale value per hour.
+
+Prices are user supplied: pink 40,000; blue 1,500; green 1,500; orange 10,000 coins per gel. Sale figures are estimates, not completed sales. Reporting counts positive inventory gains while actively farming in HUB, excludes the initial inventory baseline, and extrapolates until the first full hour. Manually receiving gels while farming in HUB also counts as gains.
+
+Run SlimeChartRenderer.exe once on the shared computer for dark PNG charts. It listens only on 127.0.0.1:17384 and receives numeric yield data, without webhook credentials. Restart it after restarting Windows. Without it, text reporting continues. Build SlimeChartRenderer.cs as a .NET Framework winexe with System.Drawing.dll and System.Web.Extensions.dll references.
 
 ## Validation
 
-The chest supports bulk deposits. Tests covered a concurrent 22-item deposit, and a later 9-item deposit-and-auto-collect transfer with all nine verified in the main backpack. The collector also cleared pre-existing chest contents. Tool exclusion and independent alt completion were checked. The final manual-only controller and two-tab Luna GUI pass Real's script diagnostics. Long-duration idle prevention and every possible capacity scenario have not been exhaustively tested.
+The walking entrypoint, navigation module, transfer guard, and two-tab GUI pass Real's diagnostics. Mocked navigation checks cover normal sprint, jump waypoints, waypoint advancement, blocked-path replanning, arrival, movement-control cleanup, and cancelling/resuming an in-flight path computation. No walking farm was deployed or live combat tested for this change.
 
-The UI uses [Luna Interface Suite](https://github.com/Nebula-Softworks/Luna-Interface-Suite), discontinued by its authors in April 2025.
+The previous teleporting/underground implementation was reported to have led to bans. Normal locomotion does not guarantee that automation is permitted or undetectable.
+
+The UI uses [Luna Interface Suite](https://github.com/Nebula-Softworks/Luna-Interface-Suite), with a clean retained-template fallback for clients whose GetObjects returns an empty asset result.

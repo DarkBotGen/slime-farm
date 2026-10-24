@@ -1,403 +1,329 @@
--- Slime + shiny + flower farm. F6 toggles everything; F7 toggles collection.
--- One attack per Heartbeat, with no added attack delay. Server cooldown still applies.
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local Input = game:GetService("UserInputService")
-local Tags = game:GetService("CollectionService")
-local VirtualUser = game:GetService("VirtualUser")
-local player = Players.LocalPlayer
-local loadModule: any = require
-local shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
-assert(shared, "Shared folder missing")
-local controllers = player:WaitForChild("PlayerScripts"):WaitForChild("Client"):WaitForChild("Controllers")
-local hotbar = loadModule(controllers:WaitForChild("HotbarController"))
-local remotes = loadModule(shared:WaitForChild("Remotes"))
-local config = loadModule(shared:WaitForChild("Config"))
-local swing = remotes.get(remotes.RequestSwing)
-local harvest = remotes.get(remotes.RequestHarvest)
-local env = getgenv()
+-- Above-ground walking farm. F6 pauses; F7 toggles optional nearby collection.
+local Players=game:GetService("Players")
+local RunService=game:GetService("RunService")
+local Input=game:GetService("UserInputService")
+local Tags=game:GetService("CollectionService")
+local VirtualUser=game:GetService("VirtualUser")
+local player=Players.LocalPlayer
+local loadModule: any=require
+local shared=game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local controllers=player:WaitForChild("PlayerScripts"):WaitForChild("Client"):WaitForChild("Controllers")
+local hotbar=loadModule(controllers:WaitForChild("HotbarController"))
+local animation=loadModule(controllers:WaitForChild("AnimationController"))
+local remotes=loadModule(shared:WaitForChild("Remotes"))
+local config=loadModule(shared:WaitForChild("Config"))
+local swing=remotes.get(remotes.RequestSwing)
+local harvest=remotes.get(remotes.RequestHarvest)
+local env=getgenv()
 if env.SlimeFarm and env.SlimeFarm.stop then env.SlimeFarm.stop() end
-local farm: any = {
-    enabled = true, collect = true, attacks = 0, kills = 0,
-    flowers = 0, shinies = 0, target = nil, lastError = nil,
-    mode = "starting", height = -8, hubReturns = 0, autoHub = true,
-    undergroundOnly = true,
-    antiAfk = true, antiAfkEvents = 0, antiAfkError = nil
-}
-env.SlimeFarm = farm
-local undergroundOK = pcall(function()
-    local factory=assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/862afd92486b4802c7cc6582d9a2f8d9fefb4fb5/underground.luau")))()
-    farm.underground=factory(farm,config)
+local farm: any={enabled=true,collect=true,walkingOnly=true,undergroundOnly=false,
+    attacks=0,kills=0,flowers=0,shinies=0,hubReturns=0,autoHub=true,mode="starting",
+    antiAfk=true,antiAfkEvents=0}
+env.SlimeFarm=farm
+local navigationOK=pcall(function()
+    local factory=assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/f938d59f7b6da62d16d4fa1017b52082164826be/navigation.luau")))()
+    farm.navigation=factory(farm,{loadModule=loadModule,controllers=controllers,config=config})
 end)
-if not undergroundOK then farm.undergroundError="Underground guard unavailable; farming blocked" end
-local function moveBelow(root, position, facing)
-    return farm.underground and farm.underground.move(root,position,facing) or false
-end
-local connections = {}
-local enemies = {}
-local flowers = {}
-local shinies = {}
-local retryAfter = setmetatable({}, {__mode = "k"})
-local stopped = false
-local folder = nil
-local trackedCharacter = nil
-local origin = nil
-local collection = nil
-local lastEquip = 0
-local previousHP = nil
-local lastDamageAt = 0
-local lastProgressAt = 0
-local blocked = setmetatable({}, {__mode = "k"})
-local targetHealthConnection = nil
-
-local lastWarningAt = 0
-local function inHub(position)
-    local relative = position - config.Hub.Origin
-    local half = config.Hub.SizeStuds * 0.5
-    return math.abs(relative.X) <= half.X + 40
-        and math.abs(relative.Z) <= half.Z + 40
-        and math.abs(relative.Y) <= 160
-end
+if not navigationOK then farm.navigationError="Navigation unavailable; farming paused";farm.enabled=false end
+local stopped=false
+local connections={}
+local enemies,flowers,shinies={},{},{}
+local blocked=setmetatable({},{__mode="k"})
+local retries=setmetatable({},{__mode="k"})
+local counted=setmetatable({},{__mode="k"})
+local folder=nil
+local collection=nil
 local portal=nil
-local portalScanAt=-10
-local portalStartedAt=0
-local returningToHub=false
-local function returnToHub(root, now)
-    if inHub(root.Position) then
-        if returningToHub then farm.hubReturns+=1;farm.target=nil;collection=nil end
-        returningToHub=false
-        portal=nil
-        return true
+local travelling=false
+local character=nil
+local hpConnection=nil
+local lastScan,lastEquip,lastSwing=-10,-10,-10
+local previousHP,lastProgress,lastDistance=nil,0,math.huge
+local priorities={OrangeSlime=1,PinkSlime=2,BlueSlime=3,GreenSlime=4}
+local function connect(signal,callback)
+    local c=signal:Connect(callback);table.insert(connections,c);return c
+end
+local function inHub(position)
+    local delta=position-config.Hub.Origin
+    local half=config.Hub.SizeStuds*0.5
+    return math.abs(delta.X)<=half.X+40 and math.abs(delta.Z)<=half.Z+40 and math.abs(delta.Y)<=160
+end
+local function health(part)
+    if not part.Parent then return 0 end
+    local gui=part:FindFirstChild("Health")
+    local bar=gui and gui:FindFirstChild("Bar")
+    return bar and bar.Size.X.Scale or 1
+end
+local function valid(part)
+    return part and part:IsA("BasePart") and part.Parent==folder
+        and string.find(string.lower(part.Name),"slime")~=nil and health(part)>0
+end
+local function countKill(part)
+    if not counted[part] then counted[part]=true;farm.kills+=1 end
+end
+local function choose(root,now)
+    local best,score=nil,math.huge
+    for candidate in pairs(enemies) do
+        if valid(candidate) and (blocked[candidate] or 0)<=now then
+            local def=config.Enemy.Enemies[candidate:GetAttribute("EnemyId")]
+            local distance=(root.Position-candidate.Position).Magnitude
+            local cost=(priorities[candidate:GetAttribute("EnemyId")] or 5)*1000000
+                +distance*10+health(candidate)*(def and def.hp or 150)
+            if cost<score then best,score=candidate,cost end
+        end
     end
-    farm.target = nil
-    collection = nil
-    returningToHub=true
-    farm.mode="Finding HUB portal"
-    if not farm.autoHub then return false end
-    if now-portalScanAt>=0.5 or not portal or not portal:IsDescendantOf(workspace) then
-        portalScanAt=now
-        local distance=math.huge
-        portal=nil
+    farm.target=best
+    if hpConnection then hpConnection:Disconnect();hpConnection=nil end
+    local gui=best and best:FindFirstChild("Health")
+    local bar=gui and gui:FindFirstChild("Bar")
+    if bar then
+        hpConnection=bar:GetPropertyChangedSignal("Size"):Connect(function()
+            if farm.target==best and health(best)<=0 then countKill(best);farm.target=nil end
+        end)
+    end
+    previousHP=best and health(best) or nil
+    lastProgress=now
+    lastDistance=best and (best.Position-root.Position).Magnitude or math.huge
+    return best
+end
+local function attach(newFolder)
+    folder=newFolder
+    table.clear(enemies)
+    for _,part in ipairs(folder:GetChildren()) do enemies[part]=true end
+    connect(folder.ChildAdded,function(part) enemies[part]=true end)
+    connect(folder.ChildRemoved,function(part)
+        enemies[part]=nil
+        if farm.target==part then
+            local gui=part:FindFirstChild("Health")
+            local bar=gui and gui:FindFirstChild("Bar")
+            if bar and bar.Size.X.Scale<=0 then countKill(part) end
+            farm.target=nil
+        end
+    end)
+end
+local function flower(part) if part:IsA("BasePart") then flowers[part]=true end end
+local function shiny(prompt)
+    if prompt:IsA("ProximityPrompt") and prompt.Parent and prompt.Parent:IsA("BasePart")
+        and prompt.Parent:GetAttribute("ShinyPiece") then shinies[prompt]=true end
+end
+for _,part in ipairs(Tags:GetTagged("Flower")) do flower(part) end
+for _,prompt in ipairs(Tags:GetTagged("AbovePrompt")) do shiny(prompt) end
+connect(Tags:GetInstanceAddedSignal("Flower"),flower)
+connect(Tags:GetInstanceRemovedSignal("Flower"),function(part) flowers[part]=nil end)
+connect(Tags:GetInstanceAddedSignal("AbovePrompt"),shiny)
+connect(Tags:GetInstanceRemovedSignal("AbovePrompt"),function(prompt) shinies[prompt]=nil end)
+local function pickup(root,now,maxDistance)
+    local best,distance=nil,maxDistance
+    for prompt in pairs(shinies) do
+        local part=prompt.Parent
+        if part and prompt:IsDescendantOf(workspace) and prompt.Enabled and inHub(part.Position)
+            and (retries[prompt] or 0)<=now then
+            local d=(part.Position-root.Position).Magnitude
+            if d<distance then best={kind="shiny",object=prompt,part=part};distance=d end
+        end
+    end
+    for part in pairs(flowers) do
+        if part:IsDescendantOf(workspace) and part:GetAttribute("Mature")==true
+            and inHub(part.Position) and (retries[part] or 0)<=now then
+            local d=(part.Position-root.Position).Magnitude
+            if d<distance then best={kind="flower",object=part,part=part};distance=d end
+        end
+    end
+    if best then best.started=now;best.lastSent=-10 end
+    return best
+end
+local function visible(root,part)
+    local params=RaycastParams.new()
+    params.FilterType=Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances={root.Parent}
+    params.RespectCanCollide=true
+    local delta=part.Position-root.Position
+    local hit=workspace:Raycast(root.Position,delta,params)
+    return not hit or hit.Instance==part
+end
+local function weapon()
+    local selected=hotbar.selected()
+    local def=selected and config.Weapon.Weapons[selected.itemId]
+    return selected,def
+end
+local function inSwordRange(root,target)
+    local selected,def=weapon()
+    return selected and selected.toolSlot=="Weapon" and def
+        and (target.Position-root.Position).Magnitude<=(def.reachStuds or 5.4)
+        and visible(root,target)
+end
+local function tryAttack(root,target,now)
+    if not inSwordRange(root,target) or not animation.swingReady() then return end
+    local _,def=weapon()
+    local standard=def and def.standard
+    local cooldown=standard and standard.AttackCooldown
+    local interval=if type(cooldown)=="table" then cooldown.max or 0.7 else 0.7
+    if now-lastSwing<math.max(0.12,interval) then return end
+    lastSwing=now
+    local function hit()
+        local live=player.Character
+        local currentRoot=live and live:FindFirstChild("HumanoidRootPart")
+        if not stopped and farm.enabled and farm.target==target and valid(target)
+            and currentRoot and inSwordRange(currentRoot,target) then
+            swing:FireServer(target);farm.attacks+=1
+        end
+    end
+    local result=animation.playSwing(hit)
+    if result~="Scheduled" and result~="Cooldown" then hit() end
+end
+local function returnToHub(root,humanoid,now)
+    if inHub(root.Position) then
+        if travelling then farm.hubReturns+=1;farm.target=nil;collection=nil;farm.navigation.pause() end
+        travelling=false;portal=nil;return true
+    end
+    travelling=true
+    farm.target=nil;collection=nil
+    if not farm.autoHub then farm.mode="Outside HUB";farm.navigation.pause();return false end
+    if now-lastScan>=1 or not portal or not portal:IsDescendantOf(workspace) then
+        lastScan=now;portal=nil
+        local nearest=math.huge
         for _,island in ipairs(workspace:GetChildren()) do
             if typeof(island:GetAttribute("IslandOrigin"))=="Vector3" then
                 for _,candidate in ipairs(island:GetChildren()) do
                     if candidate.Name=="HUB" or candidate:GetAttribute("PortalRotation")~=nil then
-                        local touch=candidate:FindFirstChild("TouchPart",true)
-                        if touch and touch:IsA("BasePart") then
-                            local d=(touch.Position-root.Position).Magnitude
-                            if d<distance then portal,distance=touch,d end
+                        local trigger=candidate:FindFirstChild("TouchPart",true)
+                        if trigger and trigger:IsA("BasePart") then
+                            local d=(trigger.Position-root.Position).Magnitude
+                            if d<nearest then portal,nearest=trigger,d end
                         end
                     end
                 end
             end
         end
     end
-    if portal and not root.Anchored and farm.underground then
-        farm.mode="Entering HUB portal"
-        if now-portalStartedAt>4 then portalStartedAt=now end
-        local offset=if now-portalStartedAt<0.15 then portal.CFrame.LookVector*6 else Vector3.zero
-        farm.underground.portalTouch(root,portal,offset)
-    end
+    farm.mode=portal and "Walking to HUB portal" or "Waiting for HUB portal to load"
+    if portal then farm.navigation.seek(root,humanoid,portal.Position,0.5,now) end
     return false
 end
-local function connect(signal, callback)
-    local c = signal:Connect(callback)
-    table.insert(connections, c)
-    return c
+local function pause()
+    if farm.navigation then farm.navigation.pause() end
+    collection=nil;farm.target=nil
+    farm.mode="paused"
 end
--- Uses each client's own idle event; no focused-window or OS input dependency.
--- Remains active while F6 pauses farming and disconnects with farm.stop().
-connect(player.Idled, function()
-    if stopped or not farm.antiAfk then return end
-    local ok, message = pcall(function()
-        VirtualUser:CaptureController()
-        VirtualUser:ClickButton2(Vector2.new(0, 0))
-    end)
-    if ok then
-        farm.antiAfkEvents = farm.antiAfkEvents + 1
-        farm.antiAfkError = nil
-    else
-        farm.antiAfkError = tostring(message)
-        warn("Anti-AFK input failed: " .. tostring(message))
-    end
-end)
-local function health(part)
-    if not part.Parent then return 0 end
-    local gui = part:FindFirstChild("Health")
-    local bar = gui and gui:FindFirstChild("Bar")
-    return bar and bar.Size.X.Scale or 1
-end
-local function validSlime(part)
-    return part:IsA("BasePart") and part.Parent == folder
-        and string.find(string.lower(part.Name), "slime") ~= nil
-        and part.Position.Y > 0 and health(part) > 0
-end
-local slimePriority = {OrangeSlime = 1, PinkSlime = 2, BlueSlime = 3, GreenSlime = 4}
-local function selectTarget(root, now)
-    local best, score = nil, math.huge
-    for candidate in pairs(enemies) do
-        if validSlime(candidate) and (blocked[candidate] or 0) <= now then
-            local def = config.Enemy.Enemies[candidate:GetAttribute("EnemyId")]
-            local remaining = health(candidate) * (def and def.hp or 150)
-            local distance = (candidate.Position - root.Position).Magnitude
-            local priority = slimePriority[candidate:GetAttribute("EnemyId")] or 5
-            local cost = priority * 1000000 + remaining + distance * 0.015
-            if cost < score then best, score = candidate, cost end
-        end
-    end
-    farm.target = best
-    if targetHealthConnection then targetHealthConnection:Disconnect();targetHealthConnection=nil end
-    local hpGui=best and best:FindFirstChild("Health")
-    local hpBar=hpGui and hpGui:FindFirstChild("Bar")
-    if hpBar then
-        targetHealthConnection=hpBar:GetPropertyChangedSignal("Size"):Connect(function()
-            if farm.target==best and health(best)<=0 and farm.enabled and not farm.transferBusy then
-                farm.kills=farm.kills+1
-                local character=player.Character
-                local nextRoot=character and character:FindFirstChild("HumanoidRootPart")
-                if nextRoot then selectTarget(nextRoot,os.clock()) end
-            end
-        end)
-    end
-    previousHP = best and health(best) or nil
-    lastProgressAt = now
-    farm.height = -8
-    return best
-end
-local function registerFlower(part)
-    if part:IsA("BasePart") then flowers[part] = true end
-end
-local function registerShiny(prompt)
-    local parent = prompt.Parent
-    if prompt:IsA("ProximityPrompt") and parent and parent:IsA("BasePart")
-        and parent:GetAttribute("ShinyPiece") then shinies[prompt] = true end
-end
-for _,part in ipairs(Tags:GetTagged("Flower")) do registerFlower(part) end
-for _,prompt in ipairs(Tags:GetTagged("AbovePrompt")) do registerShiny(prompt) end
-connect(Tags:GetInstanceAddedSignal("Flower"), registerFlower)
-connect(Tags:GetInstanceRemovedSignal("Flower"), function(part) flowers[part] = nil end)
-connect(Tags:GetInstanceAddedSignal("AbovePrompt"), registerShiny)
-connect(Tags:GetInstanceRemovedSignal("AbovePrompt"), function(prompt) shinies[prompt] = nil end)
-local function attachFolder(newFolder)
-    folder = newFolder
-    table.clear(enemies)
-    for _,part in ipairs(folder:GetChildren()) do enemies[part] = true end
-    connect(folder.ChildAdded, function(part)
-        enemies[part]=true
-        if farm.enabled and not farm.transferBusy and validSlime(part) then
-            local current=farm.target
-            local nextPriority=slimePriority[part:GetAttribute("EnemyId")] or 5
-            local currentPriority=current and (slimePriority[current:GetAttribute("EnemyId")] or 5) or math.huge
-            if not current or not validSlime(current) or nextPriority<currentPriority then
-                local character=player.Character
-                local root=character and character:FindFirstChild("HumanoidRootPart")
-                if root then selectTarget(root,os.clock()) end
-            end
-        end
-    end)
-    connect(folder.ChildRemoved, function(part)
-        enemies[part] = nil
-        if farm.target == part then
-            farm.kills = farm.kills + 1
-            farm.target = nil
-            local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-            if root and farm.enabled then selectTarget(root, os.clock()) end
-        end
-    end)
-end
-local function nextCollection(root, now)
-    local best, cost = nil, math.huge
-    for prompt in pairs(shinies) do
-        local part = prompt.Parent
-        if part and prompt:IsDescendantOf(workspace) and inHub(part.Position) and prompt.Enabled
-            and (retryAfter[prompt] or 0) <= now then
-            local distance = (part.Position - root.Position).Magnitude
-            if distance < cost then
-                best = {kind = "shiny", object = prompt, part = part}
-                cost = distance
-            end
-        end
-    end
-    if best then return best end
-    for part in pairs(flowers) do
-        if part:IsDescendantOf(workspace) and inHub(part.Position) and part:GetAttribute("Mature") == true
-            and (retryAfter[part] or 0) <= now then
-            local distance = (part.Position - root.Position).Magnitude
-            if distance < cost then
-                best = {kind = "flower", object = part, part = part}
-                cost = distance
-            end
-        end
-    end
-    return best
-end
-local function release()
-    origin = nil
-    collection = nil
-    farm.target = nil
-    farm.mode = "paused"
+function farm.setEnabled(value)
+    farm.enabled=value==true
+    if not farm.enabled then pause() end
 end
 function farm.stop()
     if stopped then return end
-    stopped = true
-    if farm.performance then farm.performance.stop() end
-    if farm.telemetry then farm.telemetry.stop() end
-    if farm.controller then farm.controller.stop() end
-    farm.enabled = false
-    if targetHealthConnection then targetHealthConnection:Disconnect();targetHealthConnection=nil end
+    stopped=true;farm.enabled=false
+    if hpConnection then hpConnection:Disconnect() end
     for _,c in ipairs(connections) do c:Disconnect() end
-    release()
-    if farm.underground then farm.underground.stop() end
+    if farm.navigation then farm.navigation.stop() end
+    if farm.controller then farm.controller.stop() end
+    if farm.telemetry then farm.telemetry.stop() end
+    if farm.performance then farm.performance.stop() end
+    farm.mode="stopped"
 end
-function farm.setEnabled(value)
-    farm.enabled = value == true
-    if not farm.enabled and not farm.transferBusy then release() end
-end
-connect(Input.InputBegan, function(key, processed)
-    if processed or Input:GetFocusedTextBox() then return end
-    if key.KeyCode == Enum.KeyCode.F6 then
-        farm.setEnabled(not farm.enabled)
-        print("Farm: " .. (farm.enabled and "ON" or "OFF"))
-    elseif key.KeyCode == Enum.KeyCode.F7 then
-        farm.collect = not farm.collect
-        collection = nil
-        print("Auto collection: " .. (farm.collect and "ON" or "OFF"))
-    end
+connect(player.Idled,function()
+    if stopped or not farm.antiAfk then return end
+    local ok=pcall(function() VirtualUser:CaptureController();VirtualUser:ClickButton2(Vector2.zero) end)
+    if ok then farm.antiAfkEvents+=1 end
 end)
-connect(RunService.Heartbeat, function()
+connect(Input.InputBegan,function(key,processed)
+    if processed or Input:GetFocusedTextBox() then return end
+    if key.KeyCode==Enum.KeyCode.F6 then farm.setEnabled(not farm.enabled)
+    elseif key.KeyCode==Enum.KeyCode.F7 then farm.collect=not farm.collect;collection=nil end
+end)
+local lastWarning=-10
+connect(RunService.Heartbeat,function()
     if stopped then return end
-    local ok, message = pcall(function()
-        local now = os.clock()
-        local character = player.Character
-        local root = character and character:FindFirstChild("HumanoidRootPart")
-        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-        if not root or not humanoid or humanoid.Health <= 0 then
-            farm.mode = "waiting for respawn"
-            farm.target, origin, collection = nil, nil, nil
-            return
+    local ok,err=pcall(function()
+        local now=os.clock()
+        local live=player.Character
+        local root=live and live:FindFirstChild("HumanoidRootPart")
+        local humanoid=live and live:FindFirstChildOfClass("Humanoid")
+        if not root or not humanoid or humanoid.Health<=0 then
+            if farm.navigation then farm.navigation.pause() end
+            farm.mode="waiting for respawn";farm.target=nil;collection=nil;return
         end
-        if trackedCharacter ~= character then
-            trackedCharacter, origin, collection = character, nil, nil
+        if character~=live then
+            character=live;collection=nil;farm.target=nil
+            if farm.navigation then farm.navigation.pause() end
         end
-        if not farm.underground then farm.mode="Underground guard unavailable; farming blocked";return end
-        if farm.controller and farm.controller.step(root, now) then return end
-        if not farm.enabled then return end
-        if not returnToHub(root, now) then return end
-        if root.Anchored then farm.mode = "waiting for travel"; return end
-        if not origin then origin = root.CFrame end
-        do
-            local hub = workspace:FindFirstChild("Hub")
-            local current = hub and hub:FindFirstChild("Guardians")
-            if current and current ~= folder then attachFolder(current) end
-        end
-        if hotbar.selected().toolSlot ~= "Weapon" and now-lastEquip>0.1 then
-            lastEquip=now
-            hotbar.select(1)
-        end
-        local target = farm.target
-        if not target or not validSlime(target) then
-            target = selectTarget(root, now)
-        else
-            local currentPriority = slimePriority[target:GetAttribute("EnemyId")] or 5
-            for candidate in pairs(enemies) do
-                if validSlime(candidate) and (blocked[candidate] or 0) <= now
-                    and (slimePriority[candidate:GetAttribute("EnemyId")] or 5) < currentPriority then
-                    target = selectTarget(root, now)
-                    break
-                end
-            end
-        end
+        if farm.controller then farm.controller.step(root,now) end
+        if not farm.enabled or not farm.navigation then return end
+        if root.Anchored then farm.navigation.pause();farm.mode="waiting for travel";return end
+        if not returnToHub(root,humanoid,now) then return end
+        local hub=workspace:FindFirstChild("Hub")
+        local current=hub and hub:FindFirstChild("Guardians")
+        if current and current~=folder then attach(current) end
+        if hotbar.selected().toolSlot~="Weapon" and now-lastEquip>0.3 then lastEquip=now;hotbar.select(1) end
+        local target=farm.target
+        if not valid(target) then target=choose(root,now) end
         if target then
-            local hp = health(target)
-            if previousHP and hp < previousHP then
-                lastDamageAt, lastProgressAt = now, now
+            local priority=priorities[target:GetAttribute("EnemyId")] or 5
+            for candidate in pairs(enemies) do
+                if valid(candidate) and (blocked[candidate] or 0)<=now
+                    and (priorities[candidate:GetAttribute("EnemyId")] or 5)<priority then target=choose(root,now);break end
             end
-            previousHP = hp
-            -- Never move closer to the surface when attacks are rejected.
-            if now - lastProgressAt > 7 and not collection then
-                blocked[target] = now + 5
-                target = selectTarget(root, now)
+            local distance=(target.Position-root.Position).Magnitude
+            local hp=health(target)
+            if (previousHP and hp<previousHP) or distance<lastDistance-1 then lastProgress=now;lastDistance=distance end
+            previousHP=hp
+            if now-lastProgress>15 and not collection then
+                blocked[target]=now+15;target=choose(root,now)
             end
         end
-        -- Short collection visits run during the sword's observed damage cooldown.
-        if farm.collect and not collection
-            and (not target or (now - lastDamageAt < 0.12)) then
-            collection = nextCollection(root, now)
-            if collection then collection.started = now end
-        end
+        -- Combat has priority. Walk to pickups between targets, never teleport.
+        if farm.collect and not collection and not target then collection=pickup(root,now,100) end
+        if collection and target then collection=nil end
         if collection then
-            local item = collection
-            if not item.part:IsDescendantOf(workspace)
-                or (item.kind == "flower" and item.part:GetAttribute("Mature") ~= true) then
-                if item.sent then
-                    if item.kind == "flower" then farm.flowers = farm.flowers + 1
-                    else farm.shinies = farm.shinies + 1 end
-                end
-                collection = nil
-            elseif now - item.started > 0.45 then
-                retryAfter[item.object] = now + 5
-                collection = nil
+            local item=collection
+            if not item.part:IsDescendantOf(workspace) or (item.kind=="flower" and item.part:GetAttribute("Mature")~=true) then
+                if item.sent then if item.kind=="flower" then farm.flowers+=1 else farm.shinies+=1 end end
+                collection=nil
+            elseif now-item.started>30 then retries[item.object]=now+20;collection=nil
             else
-                if not moveBelow(root,item.part.Position+Vector3.new(0,-4,0),item.part.Position) then
-                    retryAfter[item.object]=now+5
-                    collection=nil
-                    return
-                end
-                farm.mode = "collecting " .. item.kind
-                if not item.sent and now - item.started >= 0.15 then
-                    item.sent = true
-                    if item.kind == "flower" then harvest:FireServer(item.object)
-                    else fireproximityprompt(item.object) end
+                local reach=if item.kind=="shiny" then math.min(6,item.object.MaxActivationDistance) else math.min(6,config.Player.InteractReachStuds or 6)
+                farm.mode="Walking to "..item.kind
+                local close=(item.part.Position-root.Position).Magnitude<=reach
+                farm.navigation.seek(root,humanoid,item.part.Position,math.max(1,reach-1),now)
+                if close and visible(root,item.part) and now-item.lastSent>1 then
+                    item.lastSent=now;item.sent=true
+                    if item.kind=="flower" then harvest:FireServer(item.object) else fireproximityprompt(item.object) end
                 end
             end
-        end
-        if not collection then
-            farm.mode = target and "attacking" or "waiting for spawns"
-            if target then
-                local point = target.Position + Vector3.new(0, farm.height, 0.1)
-                if not moveBelow(root,point,target.Position) then farm.mode="Underground movement blocked";return end
-            end
-        end
-        if target and target.Parent then
-            swing:FireServer(target)
-            farm.attacks = farm.attacks + 1
+        elseif target then
+            local _,def=weapon()
+            local reach=def and def.reachStuds or 5.4
+            local close=inSwordRange(root,target)
+            farm.navigation.seek(root,humanoid,target.Position,math.max(1,reach*0.6),now)
+            farm.mode=close and "attacking" or "Walking to "..target.Name
+            tryAttack(root,target,now)
+        else
+            farm.navigation.pause()
+            farm.mode="waiting for spawns"
         end
     end)
     if not ok then
-        farm.lastError = tostring(message)
-        farm.target = nil
-        collection = nil
-        farm.mode = "recovering"
-        if os.clock() - lastWarningAt > 5 then
-            lastWarningAt = os.clock()
-            warn("Farm retrying after: " .. tostring(message))
-        end
+        farm.lastError=tostring(err)
+        if farm.navigation then farm.navigation.pause() end
+        farm.mode="recovering"
+        if os.clock()-lastWarning>5 then lastWarning=os.clock();warn("Walking farm: "..tostring(err)) end
     end
 end)
-print("Automatic farm: HUB portal recovery, below-terrain farming, alt resource savings. F6 all; F7 collection.")
-
-
-
--- The same entrypoint is used on the main account and each alt.
-local performanceOK = pcall(function()
-    local factory = assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/f5fa220cdd7bbc6301f4c03be5ae161db1c65da1/performance.luau")))()
-    farm.performance = factory(farm)
+local performanceOK=pcall(function()
+    local factory=assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/f5fa220cdd7bbc6301f4c03be5ae161db1c65da1/performance.luau")))()
+    farm.performance=factory(farm)
 end)
-if not performanceOK then farm.performanceError="Could not enable low-resource mode" end
-local uiOK, uiError = pcall(function()
-    local controllerFactory = assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/cc065b7f1cc0adecc3b590c45c91e8a7dcf2daeb/controller.luau")))()
-    farm.controller = controllerFactory(farm, {
-        remotes=remotes, config=config, loadModule=loadModule,
-        controllers=controllers, shared=shared,
-    })
-    local guiFactory = assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/bcb2050f089fff4dafd5bdee33436abc4ae9cf2d/gui.luau")))()
-    farm.gui = guiFactory(farm, farm.controller)
+if not performanceOK then farm.performanceError="Could not enable alt resource savings" end
+local uiOK,uiError=pcall(function()
+    local factory=assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/f938d59f7b6da62d16d4fa1017b52082164826be/controller.luau")))()
+    farm.controller=factory(farm,{remotes=remotes,config=config,loadModule=loadModule,controllers=controllers,shared=shared})
+    local guiFactory=assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/f938d59f7b6da62d16d4fa1017b52082164826be/gui.luau")))()
+    farm.gui=guiFactory(farm,farm.controller)
 end)
-if not uiOK then farm.uiError=tostring(uiError); warn("Farm GUI: " .. tostring(uiError)) end
-
-local telemetryOK = pcall(function()
-    local factory = assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/f5fa220cdd7bbc6301f4c03be5ae161db1c65da1/telemetry.luau")))()
-    farm.telemetry = factory(farm, {remotes=remotes, config=config})
+if not uiOK then farm.uiError=tostring(uiError) end
+local telemetryOK=pcall(function()
+    local factory=assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/f5fa220cdd7bbc6301f4c03be5ae161db1c65da1/telemetry.luau")))()
+    farm.telemetry=factory(farm,{remotes=remotes,config=config})
 end)
 if not telemetryOK then farm.telemetryError="Could not load gel reporting" end
+print("Walking farm: normal sprint, pathfinding, ordinary sword range/cooldown, and walking HUB portal entry. F6 pause; F7 collection.")
 
