@@ -123,6 +123,51 @@ return function(farm, context)
             end
         end)
     end
+    local function walkDirect(root,humanoid,destination)
+        local flat=Vector3.new(destination.X-root.Position.X,0,destination.Z-root.Position.Z)
+        if flat.Magnitude<0.1 then return false end
+        local params=RaycastParams.new()
+        params.FilterType=Enum.RaycastFilterType.Exclude
+        local exclude={}
+        for _,account in ipairs(game:GetService("Players"):GetPlayers()) do
+            if account.Character then table.insert(exclude,account.Character) end
+        end
+        local hub=workspace:FindFirstChild("Hub")
+        local guardians=hub and hub:FindFirstChild("Guardians")
+        if guardians then table.insert(exclude,guardians) end
+        params.FilterDescendantsInstances=exclude
+        params.RespectCanCollide=true
+        params.IgnoreWater=true
+        local feet=root.Position.Y-humanoid.HipHeight-root.Size.Y*0.5
+        for _,angle in ipairs({0,35,-35,65,-65,90,-90}) do
+            local a=math.rad(angle)
+            local direction=Vector3.new(flat.Unit.X*math.cos(a)-flat.Unit.Z*math.sin(a),0,
+                flat.Unit.X*math.sin(a)+flat.Unit.Z*math.cos(a))
+            local length=math.min(6,flat.Magnitude)
+            local delta=direction*length
+            local obstructed=workspace:Raycast(root.Position,delta,params)
+                or workspace:Raycast(root.Position+Vector3.new(0,1,0),delta,params)
+            if not obstructed then
+                local safe=true
+                local finalFloor=feet
+                for step=1,math.ceil(length/2) do
+                    local probe=root.Position+direction*math.min(length,step*2)+Vector3.new(0,3,0)
+                    local hit=workspace:Raycast(probe,Vector3.new(0,-16,0),params)
+                    if not hit or hit.Normal.Y<0.5 or hit.Position.Y>feet+3 or hit.Position.Y<feet-3 then safe=false;break end
+                    finalFloor=hit.Position.Y
+                end
+                if safe then
+                    if finalFloor>feet+1 and humanoid.FloorMaterial~=Enum.Material.Air then humanoid.Jump=true end
+                    humanoid:MoveTo(root.Position+delta)
+                    nav.status="Walking along clear ground"
+                    return true
+                end
+            end
+        end
+        humanoid:Move(Vector3.zero,false)
+        nav.status="Obstacle ahead; waiting for a route"
+        return false
+    end
     function nav.seek(root,humanoid,destination,radius,now)
         if stopped then return false end
         activate()
@@ -168,6 +213,9 @@ return function(farm, context)
                 humanoid.Jump=true
             end
             humanoid:MoveTo(waypoint.Position)
+        elseif not waypoint and now-lastCommand>=0.2 then
+            lastCommand=now
+            walkDirect(root,humanoid,destination)
         end
         return false
     end

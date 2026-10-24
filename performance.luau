@@ -56,8 +56,8 @@ return function(farm)
     change(workspace.Terrain,"WaterReflectance",0)
     change(game:GetService("SoundService"),"AmbientReverb",Enum.ReverbType.NoReverb)
     pcall(function() change(settings().Rendering,"QualityLevel",Enum.QualityLevel.Level01) end)
-    local ok=pcall(function() Run:Set3dRenderingEnabled(false) end)
-    mode.renderingDisabled=ok
+    -- Keep the world visible while observing normal walking and combat.
+    mode.renderingDisabled=false
     pcall(function() setfpscap(mode.fpsCap) end)
     mode.enabled=true
     -- Subscribe before the initial scan so newly streamed instances are covered.
