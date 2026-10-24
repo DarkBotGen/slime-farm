@@ -20,13 +20,13 @@ if env.SlimeFarm and env.SlimeFarm.stop then env.SlimeFarm.stop() end
 local farm: any = {
     enabled = true, collect = true, attacks = 0, kills = 0,
     flowers = 0, shinies = 0, target = nil, lastError = nil,
-    mode = "starting", height = -12, hubReturns = 0, autoHub = true,
+    mode = "starting", height = -8, hubReturns = 0, autoHub = true,
     undergroundOnly = true,
     antiAfk = true, antiAfkEvents = 0, antiAfkError = nil
 }
 env.SlimeFarm = farm
 local undergroundOK = pcall(function()
-    local factory=assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/e4421568ce54882bdb975690409de53649f88b9b/underground.luau")))()
+    local factory=assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/2ed2da97bdabd8efc215219901a9257e6cc38a15/underground.luau")))()
     farm.underground=factory(farm,config)
 end)
 if not undergroundOK then farm.undergroundError="Underground guard unavailable; farming blocked" end
@@ -161,7 +161,7 @@ local function selectTarget(root, now)
     end
     previousHP = best and health(best) or nil
     lastProgressAt = now
-    farm.height = -12
+    farm.height = -8
     return best
 end
 local function registerFlower(part)
@@ -338,7 +338,7 @@ connect(RunService.Heartbeat, function()
                 retryAfter[item.object] = now + 5
                 collection = nil
             else
-                if not moveBelow(root,item.part.Position+Vector3.new(0,-12,0),item.part.Position) then
+                if not moveBelow(root,item.part.Position+Vector3.new(0,-4,0),item.part.Position) then
                     retryAfter[item.object]=now+5
                     collection=nil
                     return
