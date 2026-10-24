@@ -3,7 +3,36 @@ return function(farm,control)
     setthreadidentity(8)
     local env=getgenv()
     env.ConfirmLuna=true
-    local Luna=loadstring(game:HttpGet("https://raw.githubusercontent.com/Nebula-Softworks/Luna-Interface-Suite/master/source.lua"))()
+    local librarySource=game:HttpGet("https://raw.githubusercontent.com/Nebula-Softworks/Luna-Interface-Suite/master/source.lua")
+    local Luna
+    for attempt=1,3 do
+        -- Some clients return an empty GetObjects result while retaining the
+        -- previously loaded Luna screen. Reuse a clean clone of that asset.
+        local uiRoot=gethui()
+        local existing=uiRoot and uiRoot:FindFirstChild("Luna UI")
+        if not env.SlimeFarmLunaTemplate and existing and existing:FindFirstChild("SmartWindow") then
+            local template=existing:Clone()
+            local main=template:FindFirstChild("SmartWindow")
+            for _,container in ipairs({main:FindFirstChild("Elements"),main.Navigation:FindFirstChild("Tabs")}) do
+                for _,name in ipairs({"Autofarm","Transfer"}) do
+                    local old=container:FindFirstChild(name)
+                    if old then old:Destroy() end
+                end
+            end
+            env.SlimeFarmLunaTemplate=template
+        end
+        local source=librarySource
+        if env.SlimeFarmLunaTemplate then
+            local first,last=source:find('game:GetObjects("rbxassetid://86467455075715")[1]',1,true)
+            if first then
+                source=source:sub(1,first-1).."getgenv().SlimeFarmLunaTemplate:Clone()"..source:sub(last+1)
+            end
+        end
+        local ok,value=pcall(function() return assert(loadstring(source))() end)
+        if ok and value then Luna=value;break end
+        if attempt<3 then task.wait(attempt) end
+    end
+    assert(Luna,"Luna UI asset unavailable after three attempts; farming continues")
     local player=game:GetService("Players").LocalPlayer
     local window=Luna:CreateWindow({Name="Slime Farm",Subtitle=player.Name,LoadingEnabled=false,KeySystem=false})
     local farmTab=window:CreateTab({Name="Autofarm",Icon="home",ImageSource="Material",ShowTitle=true})
