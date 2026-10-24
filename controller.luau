@@ -35,6 +35,7 @@ return function(farm, context)
     local savedInterval = tonumber(settings.intervalMinutes) or 15
     local auto = {
         enabled = isMain and settings.enabled ~= false,
+        parallel = settings.parallel == true,
         intervalMinutes = math.clamp(savedInterval, 1, 1440),
         queue = {}, roundRunning = false, lastResult = "No round yet",
     }
@@ -42,7 +43,7 @@ return function(farm, context)
     control.auto = auto
     local function saveAuto()
         if isMain then
-            write(settingsPath, {enabled=auto.enabled, intervalMinutes=auto.intervalMinutes})
+            write(settingsPath, {enabled=auto.enabled, intervalMinutes=auto.intervalMinutes, parallel=auto.parallel})
         end
     end
     function control.setAutoEnabled(enabled)
@@ -52,6 +53,10 @@ return function(farm, context)
             auto.roundRunning = false
         end
         auto.nextAt = os.time() + math.floor(auto.intervalMinutes * 60)
+        saveAuto()
+    end
+    function control.setParallel(value)
+        auto.parallel = value == true
         saveAuto()
     end
     function control.setAutoInterval(value)
@@ -179,10 +184,57 @@ return function(farm, context)
         write(requestPath, request)
         return true
     end
+    local function sourceEntry(request, userId)
+        if request.parallel then
+            for _, source in ipairs(request.sources or {}) do
+                if source.userId == userId then return source end
+            end
+        elseif request.sourceId == userId then
+            return {userId=request.sourceId, name=request.sourceName, session=request.altSession, index=1}
+        end
+        return nil
+    end
+    function control.requestParallel(scope, testLimit)
+        if not isMain then return false, "Only RobotTifaski can start a group transfer" end
+        if active then return false, "A transfer is already running" end
+        if not inventoryReady then return false, "Waiting for inventory sync" end
+        local sources={}
+        for _, name in ipairs(control.listAlts()) do
+            local account=Players:FindFirstChild(name)
+            local record=account and peer(account.UserId)
+            if account and fresh(record) and record.inventoryReady then
+                table.insert(sources,{userId=account.UserId,name=name,session=record.session,index=#sources+1})
+            end
+        end
+        if #sources==0 then return false,"No connected alts with a ready inventory" end
+        local request={
+            token=Http:GenerateGUID(false),jobId=game.JobId,mainId=mainId,
+            mainSession=session,parallel=true,sources=sources,
+            scope=scope or "All backpack items",created=os.time(),expires=os.time()+30,limit=testLimit,
+        }
+        active={request=request,phase="travelling",started=os.clock(),lastTravel=-10,
+            lastPickup=0,dropped=0,received=0,baseline=snapshot(),ready=false}
+        farm.transferBusy=true
+        control.status="Going home; gathering " .. #sources .. " alts"
+        write(requestPath,request)
+        return true
+    end
     function control.runAutoRound()
         if not isMain then return false, "Only the main account schedules transfers" end
         if active or auto.roundRunning then return false, "A transfer round is already running" end
         local names = control.listAlts()
+        if auto.parallel and #names>0 then
+            local ok,message=control.requestParallel("All backpack items")
+            if not ok then
+                auto.nextAt=os.time()+math.floor(auto.intervalMinutes*60)
+                auto.lastResult=tostring(message)
+                return false,message
+            end
+            auto.queue={}
+            auto.roundRunning=true
+            auto.lastResult="Concurrent round started: " .. #names .. " alts"
+            return true
+        end
         auto.queue = names
         auto.roundRunning = #names > 0
         auto.nextAt = os.time() + math.floor(auto.intervalMinutes * 60)
@@ -227,13 +279,39 @@ return function(farm, context)
     end
     local function mainStep(root, now)
         local request = active.request
-        local source = Players:GetPlayerByUserId(request.sourceId)
-        local other = peer(request.sourceId)
-        if not source or not fresh(other) or other.session ~= request.altSession then
-            finish("error", "Alt disconnected; transfer stopped"); return
-        end
-        if other.token == request.token and (other.phase == "error" or other.phase == "cancelled") then
-            finish("error", other.status or "Alt stopped"); return
+        local source,other
+        if request.parallel then
+            local allWaiting=true
+            local dropped=0
+            for _, entry in ipairs(request.sources) do
+                local account=Players:GetPlayerByUserId(entry.userId)
+                local record=peer(entry.userId)
+                if not account or not fresh(record) or record.session~=entry.session then
+                    finish("error",entry.name .. " disconnected; group transfer stopped")
+                    return
+                end
+                if record.token==request.token then
+                    if record.phase=="error" or record.phase=="cancelled" then
+                        finish("error",entry.name .. ": " .. tostring(record.status))
+                        return
+                    end
+                    dropped=dropped+(record.dropped or 0)
+                    if record.phase~="waiting-pickup" then allWaiting=false end
+                else allWaiting=false end
+            end
+            source={Name=tostring(#request.sources) .. " alts"}
+            other={token=request.token,dropped=dropped,phase=allWaiting and "waiting-pickup" or "dropping"}
+        else
+            source=Players:GetPlayerByUserId(request.sourceId)
+            other=peer(request.sourceId)
+            if not source or not fresh(other) or other.session~=request.altSession then
+                finish("error","Alt disconnected; transfer stopped")
+                return
+            end
+            if other.token==request.token and (other.phase=="error" or other.phase=="cancelled") then
+                finish("error",other.status or "Alt stopped")
+                return
+            end
         end
         local there, _, islandOrigin = atMainIsland(root)
         if not there then
@@ -309,7 +387,10 @@ return function(farm, context)
         if not mainRecord.ready or mainRecord.token ~= request.token or not mainRoot or root.Anchored then
             control.status="Waiting for receiver to be ready"; return
         end
-        active.holdCF=CFrame.new(mainRoot.Position+Vector3.new(3,0,0))
+        local ownEntry=sourceEntry(request,player.UserId)
+        local angle=request.parallel and ((ownEntry.index-1)*math.pi*2/#request.sources) or 0
+        local offset=Vector3.new(math.cos(angle)*4,0,math.sin(angle)*4)
+        active.holdCF=CFrame.lookAt(mainRoot.Position+offset,mainRoot.Position)
         root.CFrame=active.holdCF
         root.AssemblyLinearVelocity=Vector3.zero
         if not active.queue then
@@ -360,8 +441,9 @@ return function(farm, context)
             if not isMain and not active and inventoryReady then
                 local request=read(requestPath)
                 local mainRecord=read(mainPath)
+                local entry=request and sourceEntry(request,player.UserId)
                 if request and request.jobId==game.JobId and request.mainId==mainId
-                    and request.sourceId==player.UserId and request.altSession==session
+                    and entry and entry.session==session
                     and request.expires>=os.time() and not request.cancelled
                     and not seenTokens[request.token] and fresh(mainRecord)
                     and mainRecord.session==request.mainSession then

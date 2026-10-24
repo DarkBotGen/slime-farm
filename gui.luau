@@ -14,7 +14,7 @@ return function(farm, control)
     tab:CreateParagraph({Title="Slime priority",Text="Orange > Pink > Blue > Green. Underground farming and automatic HUB portal return. F6 toggles farming; F7 toggles collection."})
     local stats=tab:CreateParagraph({Title="Live status",Text="Starting..."})
     local transfer=window:CreateTab({Name="Transfers",Icon="swap_horiz",ImageSource="Material",ShowTitle=true})
-    transfer:CreateParagraph({Title="Main account: RobotTifaski",Text="Run this script on each participating client in the same server and Real workspace. One alt transfers at a time; both accounts resume farming afterward."})
+    transfer:CreateParagraph({Title="Main account: RobotTifaski",Text="Run this script on each participating client in the same server and Real workspace. Choose sequential or all-alts-together rounds. All participating accounts resume their previous farming setting afterward."})
     local selected=nil
     local scope="Farm loot"
     local dropdown=nil
@@ -40,6 +40,7 @@ return function(farm, control)
     end
     transfer:CreateButton({Name="Cancel transfer",Callback=control.cancel})
     if control.isMain then
+        transfer:CreateToggle({Name="Drop from all alts together",Description="All connected alts visit and drop concurrently. Applies to timed rounds and Transfer all connected alts now.",CurrentValue=control.auto.parallel,Callback=function(value)control.setParallel(value)end})
         transfer:CreateToggle({Name="Automatic transfers from all alts",Description="Processes connected alts one at a time, then resumes farming.",CurrentValue=control.auto.enabled,Callback=function(value)control.setAutoEnabled(value)end})
         transfer:CreateInput({Name="Minutes between transfer rounds",Description="All backpack items are transferred. Saved for this main account.",CurrentValue=tostring(control.auto.intervalMinutes),PlaceholderText="15",Numeric=true,Enter=true,ClearTextAfterFocusLost=false,Callback=function(value)
             local ok,message=control.setAutoInterval(value)
@@ -63,7 +64,7 @@ return function(farm, control)
             local seconds=math.max(0,auto.nextAt-os.time())
             local text
             if auto.roundRunning then
-                text="Round running | Alts remaining in queue: " .. #auto.queue
+                text=(auto.parallel and "All-alts-together round running" or "Round running | Alts remaining in queue: " .. #auto.queue)
             elseif auto.enabled then
                 text=string.format("Next round in %dm %02ds | Interval: %g minutes",math.floor(seconds/60),seconds%60,auto.intervalMinutes)
             else text="Automatic transfers disabled" end
