@@ -248,6 +248,7 @@ end
 function farm.stop()
     if stopped then return end
     stopped = true
+    if farm.performance then farm.performance.stop() end
     if farm.telemetry then farm.telemetry.stop() end
     if farm.controller then farm.controller.stop() end
     farm.enabled = false
@@ -382,6 +383,11 @@ print("Automatic farm ON: HUB portal recovery, attacks every frame, instant swit
 
 
 -- The same entrypoint is used on the main account and each alt.
+local performanceOK = pcall(function()
+    local factory = assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/f5fa220cdd7bbc6301f4c03be5ae161db1c65da1/performance.luau")))()
+    farm.performance = factory(farm)
+end)
+if not performanceOK then farm.performanceError="Could not enable low-resource mode" end
 local uiOK, uiError = pcall(function()
     local controllerFactory = assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/cecd01ed31882947c4ee84a5f834ecb62b598768/controller.luau")))()
     farm.controller = controllerFactory(farm, {
@@ -394,7 +400,7 @@ end)
 if not uiOK then farm.uiError=tostring(uiError); warn("Farm GUI: " .. tostring(uiError)) end
 
 local telemetryOK = pcall(function()
-    local factory = assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/a8f6eaf15b6f0edb829fd0312e7def33775acdbf/telemetry.luau")))()
+    local factory = assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/f5fa220cdd7bbc6301f4c03be5ae161db1c65da1/telemetry.luau")))()
     farm.telemetry = factory(farm, {remotes=remotes, config=config})
 end)
 if not telemetryOK then farm.telemetryError="Could not load gel reporting" end

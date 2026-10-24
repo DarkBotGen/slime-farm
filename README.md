@@ -28,9 +28,21 @@ The main account is RobotTifaski, user ID 1407091060. Coordination requires the 
 
 ## Discord gel rates
 
-Optional reporting reads `slime-farm-webhook/settings.json` from the local Real workspace. Keep credentials out of this repository. Settings use `enabled`, `url`, and `intervalSeconds` (minimum 60). All participating accounts must use the same Real workspace; they can farm in different servers. One elected account updates one Discord message with only combined pink, blue, green, and orange gels per hour.
+Optional reporting reads `slime-farm-webhook/settings.json` from the local Real workspace. Keep credentials out of this repository. Settings use `enabled`, `url`, and `intervalSeconds` (minimum 60). All participating accounts must use the same Real workspace; they can farm in different servers. One elected account updates one Discord message with combined pink, blue, green, and orange gels per hour, plus estimated sale value per hour. Prices: pink 40,000, blue 1,500, green 1,500, orange 10,000 coins each. These are user-supplied estimates, not actual sale receipts.
+
+For the dark PNG dashboard, run the local `SlimeChartRenderer.exe` once on the shared computer. It listens only on `127.0.0.1:17384`, draws a chart once per report, and receives only numeric yield data. It never reads webhook credentials. Charts show one-minute samples scaled to hourly yields; summary cards show the rolling average. The four gel charts and total estimated sale-value chart replace the previous image in the same Discord message. Without the helper, text rates and sale estimates still update. No third-party chart provider is used. Restart the helper after restarting Windows; it does not install a startup task.
+
+Build the helper from `SlimeChartRenderer.cs` using the Windows .NET Framework C# compiler with references to `System.Drawing.dll` and `System.Web.Extensions.dll`, target `winexe`.
 
 The report uses a rolling hour of positive inventory gains while farming inside HUB, excluding paused farming and chest transfers. Existing inventory is the baseline, not earnings. During the first hour, the observed session rate is extrapolated. Measurements survive reloads/rejoins locally. This measures observed farming gains; manually receiving gels while actively farming in HUB also counts. New computers require their own local settings.
+
+## Alt resource savings
+
+All accounts except RobotTifaski (immutable user ID 1407091060) use alt performance mode: 3D rendering off, 30 FPS cap, lowest engine quality, shadows and visual effects disabled, texture references cleared where writable, and existing/new workspace sounds muted. Existing and newly streamed visual instances are handled without repeated full-world scans. Gameplay parts, meshes, remotes, prompts, scripts, and streaming remain intact. The main-account guard runs before any graphics or FPS change.
+
+Stopping the whole farm with `getgenv().SlimeFarm.stop()` restores settings modified by performance mode. `getgenv().SlimeFarm.performance.stop()` restores graphics while leaving farming running. Reloading the farm reapplies alt mode. The Autofarm toggle pauses farming while keeping resource savings enabled. The GUI still has only Autofarm and Transfer tabs.
+
+The 30 FPS cap reduces attack requests to roughly 30 per second, while actual hits remain server limited. It was verified that an optimized live alt continued killing slimes. This primarily reduces graphics/rendering work; the script cannot purge Roblox's asset cache or change the game's Studio-only streaming settings, and it does not claim a fixed RAM reduction.
 
 ## Validation
 
