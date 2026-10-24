@@ -26,7 +26,7 @@ local farm: any = {
 }
 env.SlimeFarm = farm
 local undergroundOK = pcall(function()
-    local factory=assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/2ed2da97bdabd8efc215219901a9257e6cc38a15/underground.luau")))()
+    local factory=assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/862afd92486b4802c7cc6582d9a2f8d9fefb4fb5/underground.luau")))()
     farm.underground=factory(farm,config)
 end)
 if not undergroundOK then farm.undergroundError="Underground guard unavailable; farming blocked" end
