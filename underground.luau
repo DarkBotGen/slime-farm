@@ -6,6 +6,7 @@ return function(farm, config)
     local connections={}
     local collisions=setmetatable({}, {__mode="k"})
     local stopped=false
+    local portalLease=nil
     local islands,cache={},{}
     local scanned=-10
     local function surface(position)
@@ -83,11 +84,30 @@ return function(farm, config)
         policy.status="Below mapped terrain"
         return true
     end
+    function policy.portalTouch(root, trigger, offset)
+        if stopped or root.Anchored or not trigger:IsDescendantOf(workspace) then return false end
+        local relative=trigger.Position-config.Hub.Origin
+        local half=config.Hub.SizeStuds*0.5
+        if math.abs(relative.X)<=half.X+40 and math.abs(relative.Z)<=half.Z+40 then return false end
+        -- Only the portal's immediate trigger area gets a short exception.
+        portalLease={root=root,trigger=trigger,expires=os.clock()+0.25}
+        root.CFrame=CFrame.new(trigger.Position+offset)
+        root.AssemblyLinearVelocity=Vector3.zero
+        root.AssemblyAngularVelocity=Vector3.zero
+        policy.status="Entering HUB portal"
+        return true
+    end
     local function enforce()
         if stopped then return end
         local character=player.Character
         local root=character and character:FindFirstChild("HumanoidRootPart")
         if not root or not root:IsA("BasePart") or root.Anchored then return end
+        if portalLease then
+            if portalLease.root==root and os.clock()<portalLease.expires
+                and portalLease.trigger:IsDescendantOf(workspace)
+                and (root.Position-portalLease.trigger.Position).Magnitude<=12 then return end
+            portalLease=nil
+        end
         local limit=ceiling(root.Position)
         if not limit then return end
         for _,part in ipairs(character:GetDescendants()) do
