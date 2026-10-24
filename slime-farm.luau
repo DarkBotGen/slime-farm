@@ -382,12 +382,12 @@ print("Automatic farm ON: HUB portal recovery, attacks every frame, instant swit
 
 -- The same entrypoint is used on the main account and each alt.
 local uiOK, uiError = pcall(function()
-    local controllerFactory = assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/01d14e054c1f339ffa9458b88fabf05fcea886da/controller.luau")))()
+    local controllerFactory = assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/cecd01ed31882947c4ee84a5f834ecb62b598768/controller.luau")))()
     farm.controller = controllerFactory(farm, {
         remotes=remotes, config=config, loadModule=loadModule,
         controllers=controllers, shared=shared,
     })
-    local guiFactory = assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/01d14e054c1f339ffa9458b88fabf05fcea886da/gui.luau")))()
+    local guiFactory = assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/cecd01ed31882947c4ee84a5f834ecb62b598768/gui.luau")))()
     farm.gui = guiFactory(farm, farm.controller)
 end)
 if not uiOK then farm.uiError=tostring(uiError); warn("Farm GUI: " .. tostring(uiError)) end
