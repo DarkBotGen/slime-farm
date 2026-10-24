@@ -34,12 +34,12 @@ local folder = nil
 local trackedCharacter = nil
 local origin = nil
 local collection = nil
-local lastScan = 0
 local lastEquip = 0
 local previousHP = nil
 local lastDamageAt = 0
 local lastProgressAt = 0
 local blocked = setmetatable({}, {__mode = "k"})
+local targetHealthConnection = nil
 
 local portal = nil
 local portalScanAt = 0
@@ -148,6 +148,19 @@ local function selectTarget(root, now)
         end
     end
     farm.target = best
+    if targetHealthConnection then targetHealthConnection:Disconnect();targetHealthConnection=nil end
+    local hpGui=best and best:FindFirstChild("Health")
+    local hpBar=hpGui and hpGui:FindFirstChild("Bar")
+    if hpBar then
+        targetHealthConnection=hpBar:GetPropertyChangedSignal("Size"):Connect(function()
+            if farm.target==best and health(best)<=0 and farm.enabled and not farm.transferBusy then
+                farm.kills=farm.kills+1
+                local character=player.Character
+                local nextRoot=character and character:FindFirstChild("HumanoidRootPart")
+                if nextRoot then selectTarget(nextRoot,os.clock()) end
+            end
+        end)
+    end
     previousHP = best and health(best) or nil
     lastProgressAt = now
     farm.height = -8
@@ -171,7 +184,19 @@ local function attachFolder(newFolder)
     folder = newFolder
     table.clear(enemies)
     for _,part in ipairs(folder:GetChildren()) do enemies[part] = true end
-    connect(folder.ChildAdded, function(part) enemies[part] = true end)
+    connect(folder.ChildAdded, function(part)
+        enemies[part]=true
+        if farm.enabled and not farm.transferBusy and validSlime(part) then
+            local current=farm.target
+            local nextPriority=slimePriority[part:GetAttribute("EnemyId")] or 5
+            local currentPriority=current and (slimePriority[current:GetAttribute("EnemyId")] or 5) or math.huge
+            if not current or not validSlime(current) or nextPriority<currentPriority then
+                local character=player.Character
+                local root=character and character:FindFirstChild("HumanoidRootPart")
+                if root then selectTarget(root,os.clock()) end
+            end
+        end
+    end)
     connect(folder.ChildRemoved, function(part)
         enemies[part] = nil
         if farm.target == part then
@@ -225,6 +250,7 @@ function farm.stop()
     stopped = true
     if farm.controller then farm.controller.stop() end
     farm.enabled = false
+    if targetHealthConnection then targetHealthConnection:Disconnect();targetHealthConnection=nil end
     for _,c in ipairs(connections) do c:Disconnect() end
     release()
 end
@@ -263,15 +289,14 @@ connect(RunService.Heartbeat, function()
         if not returnToHub(root, now) then return end
         if root.Anchored then farm.mode = "waiting for travel"; return end
         if not origin then origin = root.CFrame end
-        if now - lastScan > 0.3 then
-            lastScan = now
+        do
             local hub = workspace:FindFirstChild("Hub")
             local current = hub and hub:FindFirstChild("Guardians")
             if current and current ~= folder then attachFolder(current) end
         end
-        if now - lastEquip > 0.5 then
-            lastEquip = now
-            if hotbar.selected().toolSlot ~= "Weapon" then hotbar.select(1) end
+        if hotbar.selected().toolSlot ~= "Weapon" and now-lastEquip>0.1 then
+            lastEquip=now
+            hotbar.select(1)
         end
         local target = farm.target
         if not target or not validSlime(target) then
@@ -357,12 +382,12 @@ print("Automatic farm ON: HUB portal recovery, attacks every frame, instant swit
 
 -- The same entrypoint is used on the main account and each alt.
 local uiOK, uiError = pcall(function()
-    local controllerFactory = assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/a8b36e961aaac03eaf4ac021ec236708aa1f15cc/controller.luau")))()
+    local controllerFactory = assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/01d14e054c1f339ffa9458b88fabf05fcea886da/controller.luau")))()
     farm.controller = controllerFactory(farm, {
         remotes=remotes, config=config, loadModule=loadModule,
         controllers=controllers, shared=shared,
     })
-    local guiFactory = assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/a8b36e961aaac03eaf4ac021ec236708aa1f15cc/gui.luau")))()
+    local guiFactory = assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/01d14e054c1f339ffa9458b88fabf05fcea886da/gui.luau")))()
     farm.gui = guiFactory(farm, farm.controller)
 end)
 if not uiOK then farm.uiError=tostring(uiError); warn("Farm GUI: " .. tostring(uiError)) end
