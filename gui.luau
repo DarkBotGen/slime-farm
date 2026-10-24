@@ -14,6 +14,16 @@ return function(farm, control)
     tab:CreateParagraph({Title="Slime priority",Text="Orange > Pink > Blue > Green. Underground farming and automatic HUB portal return. F6 toggles farming; F7 toggles collection."})
     local stats=tab:CreateParagraph({Title="Live status",Text="Starting..."})
     local transfer=window:CreateTab({Name="Transfers",Icon="swap_horiz",ImageSource="Material",ShowTitle=true})
+    if control.isMain then
+        transfer:CreateButton({
+            Name="BRING ALL ALTS + DROP ALL ITEMS",
+            Description="One click: all connected alts visit RobotTifaski, drop all backpack items together, then resume farming.",
+            Callback=function()
+                local ok,message=control.requestParallel("All backpack items")
+                if not ok then control.status=message end
+            end,
+        })
+    end
     transfer:CreateParagraph({Title="Main account: RobotTifaski",Text="Run this script on each participating client in the same server and Real workspace. Choose sequential or all-alts-together rounds. All participating accounts resume their previous farming setting afterward."})
     local selected=nil
     local scope="Farm loot"

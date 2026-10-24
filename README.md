@@ -18,6 +18,8 @@ Run the same loader on RobotTifaski and each participating alt. The main account
 
 On RobotTifaski, open **Transfers**, click **Refresh connected alts**, select an alt, choose the contents, and click **Transfer selected alt to main**.
 
+For a single-click group transfer, press **BRING ALL ALTS + DROP ALL ITEMS** at the top of RobotTifaski's Transfers tab. It immediately gathers every registered alt and starts concurrent transfer of all backpack items, without selecting accounts or enabling the concurrent-round toggle. An existing transfer must finish or be cancelled before starting another.
+
 - **Farm loot:** slime gels, shinies, and flowers.
 - **All backpack items:** all inventory stacks, including spare equipment, blocks, seeds, and machines. Starter tools are retained. Items refused by the server stop the transfer with an error, leaving the remaining inventory intact.
 
