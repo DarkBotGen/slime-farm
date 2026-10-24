@@ -4,7 +4,8 @@ return function(farm, context)
     local Paths=game:GetService("PathfindingService")
     local input=context.loadModule(context.controllers:WaitForChild("InputController"))
     local controls=nil
-    pcall(function() controls=context.loadModule(player.PlayerScripts:WaitForChild("PlayerModule")):GetControls() end)
+    local playerModule=player.PlayerScripts:FindFirstChild("PlayerModule")
+    if playerModule then pcall(function() controls=context.loadModule(playerModule):GetControls() end) end
     local nav: any={status="Idle",replans=0,failures=0}
     local stopped,active,ownSprint,computing=false,false,false,false
     local epoch=0
