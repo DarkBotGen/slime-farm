@@ -248,6 +248,7 @@ end
 function farm.stop()
     if stopped then return end
     stopped = true
+    if farm.telemetry then farm.telemetry.stop() end
     if farm.controller then farm.controller.stop() end
     farm.enabled = false
     if targetHealthConnection then targetHealthConnection:Disconnect();targetHealthConnection=nil end
@@ -391,4 +392,10 @@ local uiOK, uiError = pcall(function()
     farm.gui = guiFactory(farm, farm.controller)
 end)
 if not uiOK then farm.uiError=tostring(uiError); warn("Farm GUI: " .. tostring(uiError)) end
+
+local telemetryOK = pcall(function()
+    local factory = assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/a8f6eaf15b6f0edb829fd0312e7def33775acdbf/telemetry.luau")))()
+    farm.telemetry = factory(farm, {remotes=remotes, config=config})
+end)
+if not telemetryOK then farm.telemetryError="Could not load gel reporting" end
 
