@@ -26,7 +26,7 @@ return function(farm, control)
     end
     transfer:CreateParagraph({Title="Main account: RobotTifaski",Text="Run this script on each participating client in the same server and Real workspace. Choose sequential or all-alts-together rounds. All participating accounts resume their previous farming setting afterward."})
     local selected=nil
-    local scope="Farm loot"
+    local scope="All backpack items"
     local dropdown=nil
     if control.isMain then
         local options=control.listAlts()
@@ -40,7 +40,7 @@ return function(farm, control)
             dropdown:Set({Options=values,CurrentOption=selected})
         end})
         transfer:CreateDropdown({Name="Items to transfer",Options={"Farm loot","All backpack items"},CurrentOption=scope,MultipleOptions=false,Callback=function(value)scope=type(value)=="table" and value[1] or value end})
-        transfer:CreateParagraph({Title="Transfer contents",Text="Farm loot: all slime gels, shinies, and flowers. All backpack items: also blocks, seeds, machines, and spare equipment. Starter tools are kept. Items are dropped one at a time and picked up by RobotTifaski."})
+        transfer:CreateParagraph({Title="Transfer contents",Text="Farm loot: all slime gels, shinies, and flowers. All backpack items: also blocks, seeds, machines, and spare equipment. Orange gels first, then pink, blue, green, then everything else. Starter tools are kept. Each alt leaves independently after its inventory is empty and its drops are collected."})
         transfer:CreateButton({Name="Transfer selected alt to main",Description="Visits your island and drops the selected inventory for collection.",Callback=function()
             local ok,message=control.requestTransfer(selected,scope)
             if not ok then control.status=message end

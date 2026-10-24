@@ -16,9 +16,11 @@ return function(farm, context)
     local settingsPath = "slime-farm-control/auto-transfer-" .. mainId .. ".json"
     local session = Http:GenerateGUID(false)
     local inventory, inventoryReady = {}, false
+    local inventoryVersion = 0
     local connections, active, gui = {}, nil, nil
     local stopped, lastPoll, lastPublish, lastSync, lastUI = false, 0, 0, -10, 0
     local seenTokens = {}
+    local readCache = {}
     local control: any = {status = "Idle", isMain = isMain, mainName = mainName, selectedAlt = nil}
     farm.transfer = control
     local function read(path)
@@ -26,7 +28,8 @@ return function(farm, context)
             if not isfile(path) then return nil end
             return Http:JSONDecode(readfile(path))
         end)
-        return ok and type(value) == "table" and value or nil
+        if ok and type(value)=="table" then readCache[path]=value;return value end
+        return readCache[path]
     end
     local function write(path, value)
         writefile(path, Http:JSONEncode(value))
@@ -121,6 +124,8 @@ return function(farm, context)
             status = control.status, dropped = active and active.dropped or control.dropped or 0,
             received = active and active.received or control.received or 0,
             ready = active and active.ready or false,
+            droppedCounts = active and active.droppedCounts or control.droppedCounts or {},
+            completedSources = active and active.completedSources or control.completedSources or {},
             x = root and root.Position.X, y = root and root.Position.Y, z = root and root.Position.Z,
         }
         write(clientPath, record)
@@ -129,6 +134,8 @@ return function(farm, context)
         if active then
             control.lastToken, control.lastPhase = active.request.token, phase
             control.dropped, control.received = active.dropped, active.received
+            control.droppedCounts = active.droppedCounts or {}
+            control.completedSources = active.completedSources or {}
             seenTokens[active.request.token] = true
         end
         active = nil
@@ -146,21 +153,29 @@ return function(farm, context)
         end
         finish("cancelled", "Cancelled; already dropped items remain on the island")
     end
+    local gelPriority={OrangeSlimeGel=1,PinkSlimeGel=2,BlueSlimeGel=3,SlimeGel=4}
     local function queueFor(scope, limit)
-        local queue, total = {}, 0
-        for key, count in pairs(inventory) do
-            local item = stackKey.item(key)
-            local eligible = scope == "All backpack items"
-                or string.match(item, "SlimeGel$") ~= nil
+        local queue,total={},0
+        for key,count in pairs(inventory) do
+            local item=stackKey.item(key)
+            local eligible=scope=="All backpack items" or string.match(item,"SlimeGel$")~=nil
                 or config.Shiny.isShiny(item) or config.Flower.isFlower(item)
-            if eligible and count > 0 and not config.Tool.StarterEquipment[item] then
-                local amount = math.floor(count)
-                if limit then amount = math.min(amount, math.max(0, limit - total)) end
-                if amount > 0 then table.insert(queue, {key = key, initial = count, amount = amount}); total = total + amount end
+            if eligible and count>0 and not config.Tool.StarterEquipment[item] then
+                table.insert(queue,{key=key,initial=count,amount=math.floor(count)})
             end
         end
-        table.sort(queue, function(a,b) return a.key < b.key end)
-        return queue, total
+        table.sort(queue,function(x,y)
+            local xp=gelPriority[stackKey.item(x.key)] or 5
+            local yp=gelPriority[stackKey.item(y.key)] or 5
+            if xp~=yp then return xp<yp end
+            return x.key<y.key
+        end)
+        local result={}
+        for _,entry in ipairs(queue) do
+            if limit then entry.amount=math.min(entry.amount,math.max(0,limit-total)) end
+            if entry.amount>0 then table.insert(result,entry);total=total+entry.amount end
+        end
+        return result,total
     end
     function control.requestTransfer(altName, scope, testLimit)
         if not isMain then return false, "Start transfers from RobotTifaski's GUI" end
@@ -265,6 +280,7 @@ return function(farm, context)
         if type(a1) == "table" then
             inventory = stackKey.split(a1, type(a7) == "table" and a7 or nil)
             inventoryReady = true
+            inventoryVersion = inventoryVersion + 1
         end
     end))
     local function looseNear(root)
@@ -280,24 +296,35 @@ return function(farm, context)
     local function mainStep(root, now)
         local request = active.request
         local source,other
+        local pendingSources={}
+        active.completedSources=active.completedSources or {}
+        active.allocatedCounts=active.allocatedCounts or {}
         if request.parallel then
             local allWaiting=true
             local dropped=0
-            for _, entry in ipairs(request.sources) do
-                local account=Players:GetPlayerByUserId(entry.userId)
-                local record=peer(entry.userId)
-                if not account or not fresh(record) or record.session~=entry.session then
-                    finish("error",entry.name .. " disconnected; group transfer stopped")
-                    return
-                end
-                if record.token==request.token then
-                    if record.phase=="error" or record.phase=="cancelled" then
-                        finish("error",entry.name .. ": " .. tostring(record.status))
+            for _,entry in ipairs(request.sources) do
+                local completed=active.completedSources[tostring(entry.userId)]
+                if completed then
+                    dropped=dropped+completed.dropped
+                else
+                    local account=Players:GetPlayerByUserId(entry.userId)
+                    local record=peer(entry.userId)
+                    if not account or not fresh(record) or record.session~=entry.session then
+                        finish("error",entry.name .. " disconnected; group transfer stopped")
                         return
                     end
-                    dropped=dropped+(record.dropped or 0)
-                    if record.phase~="waiting-pickup" then allWaiting=false end
-                else allWaiting=false end
+                    allWaiting=false
+                    if record.token==request.token then
+                        if record.phase=="error" or record.phase=="cancelled" then
+                            finish("error",entry.name .. ": " .. tostring(record.status))
+                            return
+                        end
+                        dropped=dropped+(record.dropped or 0)
+                        if record.phase=="waiting-pickup" then
+                            table.insert(pendingSources,{entry=entry,record=record})
+                        end
+                    end
+                end
             end
             source={Name=tostring(#request.sources) .. " alts"}
             other={token=request.token,dropped=dropped,phase=allWaiting and "waiting-pickup" or "dropping"}
@@ -331,8 +358,13 @@ return function(farm, context)
         root.AssemblyLinearVelocity = Vector3.zero
         active.ready = true
         active.phase = "receiving"
-        local received = 0
-        for key, count in pairs(inventory) do received = received + math.max(0, count - (active.baseline[key] or 0)) end
+        local received=0
+        local gains={}
+        for key,count in pairs(inventory) do
+            local gain=math.max(0,count-(active.baseline[key] or 0))
+            gains[key]=gain
+            received=received+gain
+        end
         active.received = received
         local loose = looseNear(root)
         if now - active.lastPickup >= 0.1 then
@@ -341,6 +373,32 @@ return function(farm, context)
                 local id=loose[i]:GetAttribute("EntityId")
                 if id then R.get(R.RequestPickup):FireServer(id) end
             end
+        end
+        if request.parallel then
+            for _,pending in ipairs(pendingSources) do
+                local enough=true
+                local counts=pending.record.droppedCounts or {}
+                local total=0
+                for key,count in pairs(counts) do
+                    total=total+count
+                    if (gains[key] or 0)-(active.allocatedCounts[key] or 0)<count then enough=false end
+                end
+                if total~=(pending.record.dropped or 0) then enough=false end
+                if enough then
+                    for key,count in pairs(counts) do
+                        active.allocatedCounts[key]=(active.allocatedCounts[key] or 0)+count
+                    end
+                    active.completedSources[tostring(pending.entry.userId)]={dropped=total}
+                end
+            end
+            local completed=0
+            for _ in pairs(active.completedSources) do completed=completed+1 end
+            active.dropped=other.dropped or 0
+            control.status=string.format("%d / %d alts finished | dropped %d | received %d",completed,#request.sources,active.dropped,received)
+            if completed==#request.sources then
+                finish("complete",string.format("Complete: received %d items from %d alts",received,completed))
+            end
+            return
         end
         if other.token == request.token then
             active.dropped = other.dropped or 0
@@ -355,23 +413,38 @@ return function(farm, context)
         local mainRecord=read(mainPath)
         local main=Players:GetPlayerByUserId(mainId)
         local mainRoot=rootOf(main)
+        local ownCompletion=mainRecord and mainRecord.completedSources
+            and mainRecord.completedSources[tostring(player.UserId)]
+        if fresh(mainRecord) and mainRecord.session==request.mainSession
+            and mainRecord.token==request.token and ownCompletion then
+            finish("complete","Inventory transferred and collected; returning to farming")
+            return
+        end
         if fresh(mainRecord) and mainRecord.session == request.mainSession
             and mainRecord.token == request.token and mainRecord.phase == "complete" then
             finish("complete", "Transfer complete; returning to farming")
             return
         end
         if not fresh(mainRecord) or mainRecord.session ~= request.mainSession or not main then
-            finish("error", "Receiver unavailable; stopped dropping"); return
+            active.phase="waiting-receiver"
+            control.status="Waiting for receiver; remaining inventory is not empty"
+            return
         end
         local latest=read(requestPath)
-        if not latest or latest.token ~= request.token or latest.cancelled then
+        if not latest then
+            control.status="Waiting for transfer command"
+            return
+        end
+        if latest.token ~= request.token or latest.cancelled then
             finish("cancelled", "Transfer cancelled by main account"); return
         end
         if mainRecord.token == request.token and mainRecord.phase == "complete" then
             finish("complete", "Transfer complete; returning to farming"); return
         end
         if mainRecord.token == request.token and (mainRecord.phase == "error" or mainRecord.phase == "cancelled") then
-            finish("error", mainRecord.status or "Receiver stopped"); return
+            active.phase="blocked"
+            control.status=mainRecord.status or "Receiver stopped; inventory kept until retry or cancel"
+            return
         end
         local there=atMainIsland(root)
         if not there then
@@ -394,13 +467,21 @@ return function(farm, context)
         root.CFrame=active.holdCF
         root.AssemblyLinearVelocity=Vector3.zero
         if not active.queue then
-            active.queue,active.total=queueFor(request.scope,request.limit)
+            active.limit=type(request.limit)=="table" and request.limit[tostring(player.UserId)] or request.limit
+            active.queue,active.total=queueFor(request.scope,active.limit)
+            active.completedDrops=0
+            active.completedCounts={}
             active.index=1
         end
-        local dropped=0
-        for _, entry in ipairs(active.queue) do
-            dropped=dropped+math.min(entry.amount, math.max(0,entry.initial-(inventory[entry.key] or 0)))
+        local dropped=active.completedDrops or 0
+        local counts={}
+        for key,count in pairs(active.completedCounts or {}) do counts[key]=count end
+        for _,entry in ipairs(active.queue) do
+            local taken=math.min(entry.amount,math.max(0,entry.initial-(inventory[entry.key] or 0)))
+            counts[entry.key]=(counts[entry.key] or 0)+taken
+            dropped=dropped+taken
         end
+        active.droppedCounts=counts
         active.dropped=dropped
         while active.queue[active.index] do
             local entry=active.queue[active.index]
@@ -408,6 +489,31 @@ return function(farm, context)
             if taken>=entry.amount then active.index=active.index+1 else break end
         end
         local entry=active.queue[active.index]
+        if not entry and not active.limit then
+            local remaining,total=queueFor(request.scope,nil)
+            if #remaining>0 then
+                active.completedDrops=active.dropped
+                active.completedCounts=active.droppedCounts
+                active.queue,active.index,active.total=remaining,1,active.dropped+total
+                active.emptyVersion=nil
+                entry=active.queue[1]
+            elseif not active.emptyVersion then
+                active.emptyVersion=inventoryVersion
+                active.emptySyncAt=now
+                R.get(R.RequestSync):FireServer()
+                active.phase="checking-empty"
+                control.status="Verifying that transferable inventory is empty"
+                return
+            elseif inventoryVersion<=active.emptyVersion then
+                if now-active.emptySyncAt>5 then
+                    active.emptySyncAt=now
+                    R.get(R.RequestSync):FireServer()
+                end
+                active.phase="checking-empty"
+                control.status="Waiting for final inventory verification"
+                return
+            end
+        end
         if not entry then
             active.phase="waiting-pickup"
             control.status="All items dropped; waiting for pickup acknowledgement"
@@ -423,7 +529,13 @@ return function(farm, context)
             entry.awaitCount = nil
         end
         if now-(entry.progressAt or now)>10 then
-            finish("error", "Server refused item " .. stackKey.item(entry.key) .. "; remaining inventory kept"); return
+            active.phase="blocked"
+            control.status="Waiting to drop " .. stackKey.item(entry.key) .. "; inventory is not empty"
+            if now-(entry.retryAt or 0)>2 then
+                entry.retryAt=now
+                entry.awaitCount=nil
+                entry.progressAt=now
+            else return end
         end
         -- Small batches stay below the game's 50 loose-player-drop cap.
         if #looseNear(mainRoot)>=12 or entry.awaitCount then return end
@@ -454,8 +566,7 @@ return function(farm, context)
             end
             automaticTransfers()
             if active then
-                if now-active.started>1800 then finish("error","Transfer timed out; remaining items kept")
-                elseif isMain then mainStep(root,now) else altStep(root,now) end
+                if isMain then mainStep(root,now) else altStep(root,now) end
             end
         end
         if now-lastPublish>=0.25 then lastPublish=now; publish(root) end
