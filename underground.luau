@@ -2,7 +2,7 @@
 return function(farm, config)
     local player=game:GetService("Players").LocalPlayer
     local Run=game:GetService("RunService")
-    local policy: any={depth=12, corrections=0, status="Starting"}
+    local policy: any={depth=4, corrections=0, status="Starting"}
     local connections={}
     local collisions=setmetatable({}, {__mode="k"})
     local stopped=false
@@ -65,7 +65,7 @@ return function(farm, config)
             local ok,box,size=pcall(character.GetBoundingBox,character)
             local root=character:FindFirstChild("HumanoidRootPart")
             if ok and root and root:IsA("BasePart") then
-                depth=math.max(depth,box.Position.Y+size.Y/2-root.Position.Y+4)
+                depth=math.max(depth,box.Position.Y+size.Y/2-root.Position.Y+0.75)
             end
         end
         return entry.y-depth
