@@ -6,6 +6,16 @@ return function(farm, context)
     local controls=nil
     local playerModule=player.PlayerScripts:FindFirstChild("PlayerModule")
     if playerModule then pcall(function() controls=context.loadModule(playerModule):GetControls() end) end
+    if not controls then
+        local sharedModule=game:GetService("StarterPlayer"):FindFirstChild("PlayerModule")
+        local controlModule=sharedModule and sharedModule:FindFirstChild("ControlModule")
+        if controlModule then
+            pcall(function()
+                local value=context.loadModule(controlModule)
+                if type(value.Disable)=="function" and type(value.Enable)=="function" then controls=value end
+            end)
+        end
+    end
     local nav: any={status="Idle",replans=0,failures=0}
     local stopped,active,ownSprint,computing=false,false,false,false
     local epoch=0
