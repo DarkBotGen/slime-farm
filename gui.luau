@@ -16,8 +16,8 @@ return function(farm, control)
     local transfer=window:CreateTab({Name="Transfers",Icon="swap_horiz",ImageSource="Material",ShowTitle=true})
     if control.isMain then
         transfer:CreateButton({
-            Name="BRING ALL ALTS + DROP ALL ITEMS",
-            Description="One click: all connected alts visit RobotTifaski, drop all backpack items together, then resume farming.",
+            Name="BRING ALL ALTS + DEPOSIT IN CHEST",
+            Description="One click: all connected alts visit RobotTifaski, deposit all non-tool items in the Large Chest, then resume farming.",
             Callback=function()
                 local ok,message=control.requestParallel("All backpack items")
                 if not ok then control.status=message end
@@ -40,8 +40,8 @@ return function(farm, control)
             dropdown:Set({Options=values,CurrentOption=selected})
         end})
         transfer:CreateDropdown({Name="Items to transfer",Options={"Farm loot","All backpack items"},CurrentOption=scope,MultipleOptions=false,Callback=function(value)scope=type(value)=="table" and value[1] or value end})
-        transfer:CreateParagraph({Title="Transfer contents",Text="Farm loot: all slime gels, shinies, and flowers. All backpack items: also blocks, seeds, machines, and spare equipment. Orange gels first, then pink, blue, green, then everything else. Starter tools are kept. Each alt leaves independently after its inventory is empty and its drops are collected."})
-        transfer:CreateButton({Name="Transfer selected alt to main",Description="Visits your island and drops the selected inventory for collection.",Callback=function()
+        transfer:CreateParagraph({Title="Transfer contents",Text="Deposits use the Large Chest on RobotTifaski\'s island. Orange gels first, then pink, blue, green, then everything else. Weapons, pickaxes, axes, buckets, plows, watering cans, and pollinators stay on the alts. A full chest pauses deposits until space is available."})
+        transfer:CreateButton({Name="Transfer selected alt to main",Description="Visits your island and stores selected non-tool inventory in the Large Chest.",Callback=function()
             local ok,message=control.requestTransfer(selected,scope)
             if not ok then control.status=message end
         end})
@@ -50,7 +50,7 @@ return function(farm, control)
     end
     transfer:CreateButton({Name="Cancel transfer",Callback=control.cancel})
     if control.isMain then
-        transfer:CreateToggle({Name="Drop from all alts together",Description="All connected alts visit and drop concurrently. Applies to timed rounds and Transfer all connected alts now.",CurrentValue=control.auto.parallel,Callback=function(value)control.setParallel(value)end})
+        transfer:CreateToggle({Name="All alts deposit together",Description="All connected alts visit and deposit stacks into the Large Chest. Applies to timed rounds and Transfer all connected alts now.",CurrentValue=control.auto.parallel,Callback=function(value)control.setParallel(value)end})
         transfer:CreateToggle({Name="Automatic transfers from all alts",Description="Processes connected alts one at a time, then resumes farming.",CurrentValue=control.auto.enabled,Callback=function(value)control.setAutoEnabled(value)end})
         transfer:CreateInput({Name="Minutes between transfer rounds",Description="All backpack items are transferred. Saved for this main account.",CurrentValue=tostring(control.auto.intervalMinutes),PlaceholderText="15",Numeric=true,Enter=true,ClearTextAfterFocusLost=false,Callback=function(value)
             local ok,message=control.setAutoInterval(value)

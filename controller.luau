@@ -17,6 +17,8 @@ return function(farm, context)
     local session = Http:GenerateGUID(false)
     local inventory, inventoryReady = {}, false
     local inventoryVersion = 0
+    local storageStates = {}
+    local permissionState = nil
     local connections, active, gui = {}, nil, nil
     local stopped, lastPoll, lastPublish, lastSync, lastUI = false, 0, 0, -10, 0
     local seenTokens = {}
@@ -126,6 +128,8 @@ return function(farm, context)
             ready = active and active.ready or false,
             droppedCounts = active and active.droppedCounts or control.droppedCounts or {},
             completedSources = active and active.completedSources or control.completedSources or {},
+            chestKey = active and active.chestKey,
+            transport = "LargeChest",
             x = root and root.Position.X, y = root and root.Position.Y, z = root and root.Position.Z,
         }
         write(clientPath, record)
@@ -151,7 +155,12 @@ return function(farm, context)
             active.request.cancelled = true
             write(requestPath, active.request)
         end
-        finish("cancelled", "Cancelled; already dropped items remain on the island")
+        finish("cancelled", "Cancelled; deposited items remain in the chest")
+    end
+    local utilityTools={Plow=true,Bucket=true,WateringCan=true,Pollinator=true}
+    local function isTool(item)
+        return config.Tool.Tools[item]~=nil or config.Weapon.Weapons[item]~=nil
+            or config.Tool.StarterEquipment[item]==true or utilityTools[item]==true
     end
     local gelPriority={OrangeSlimeGel=1,PinkSlimeGel=2,BlueSlimeGel=3,SlimeGel=4}
     local function queueFor(scope, limit)
@@ -160,7 +169,7 @@ return function(farm, context)
             local item=stackKey.item(key)
             local eligible=scope=="All backpack items" or string.match(item,"SlimeGel$")~=nil
                 or config.Shiny.isShiny(item) or config.Flower.isFlower(item)
-            if eligible and count>0 and not config.Tool.StarterEquipment[item] then
+            if eligible and count>0 and not isTool(item) then
                 table.insert(queue,{key=key,initial=count,amount=math.floor(count)})
             end
         end
@@ -283,129 +292,190 @@ return function(farm, context)
             inventoryVersion = inventoryVersion + 1
         end
     end))
-    local function looseNear(root)
-        local result = {}
-        for _, part in ipairs(Tags:GetTagged("LooseItem")) do
-            if part:IsA("BasePart") and part:IsDescendantOf(workspace)
-                and (part.Position - root.Position).Magnitude <= config.Build.Pickup.RadiusStuds then
-                table.insert(result, part)
+    table.insert(connections,R.get(R.StorageUpdate).OnClientEvent:Connect(function(key,kind,contents,slots,stackSize)
+        if kind=="LargeChest" and type(contents)=="table" then
+            local copy={}
+            for item,count in pairs(contents) do copy[item]=count end
+            local previous=storageStates[key]
+            local positive={}
+            if previous then for item,count in pairs(previous.positive or {}) do positive[item]=count end end
+            for item,count in pairs(copy) do
+                positive[item]=(positive[item] or 0)+math.max(0,count-(previous and previous.contents[item] or 0))
+            end
+            storageStates[key]={contents=copy,positive=positive,slots=slots,stackSize=stackSize,updated=os.clock()}
+        end
+    end))
+    if isMain then
+        table.insert(connections,R.get(R.PermissionSummary).OnClientEvent:Connect(function(value)
+            if type(value)=="table" then permissionState=value end
+        end))
+    end
+    local function chestAt(key)
+        local island=mainIsland()
+        if not island then return nil end
+        local best=nil
+        for _,part in ipairs(island:GetDescendants()) do
+            if part:IsA("BasePart") and part:GetAttribute("Container")=="LargeChest"
+                and (not key or part:GetAttribute("CellKey")==key) then
+                if not best or tostring(part:GetAttribute("CellKey"))<tostring(best:GetAttribute("CellKey")) then best=part end
             end
         end
-        return result
+        return best
     end
-    local function mainStep(root, now)
-        local request = active.request
-        local source,other
-        local pendingSources={}
-        active.completedSources=active.completedSources or {}
-        active.allocatedCounts=active.allocatedCounts or {}
-        if request.parallel then
-            local allWaiting=true
-            local dropped=0
-            for _,entry in ipairs(request.sources) do
-                local completed=active.completedSources[tostring(entry.userId)]
-                if completed then
-                    dropped=dropped+completed.dropped
-                else
-                    local account=Players:GetPlayerByUserId(entry.userId)
-                    local record=peer(entry.userId)
-                    if not account or not fresh(record) or record.session~=entry.session then
-                        finish("error",entry.name .. " disconnected; group transfer stopped")
-                        return
-                    end
-                    allWaiting=false
-                    if record.token==request.token then
-                        if record.phase=="error" or record.phase=="cancelled" then
-                            finish("error",entry.name .. ": " .. tostring(record.status))
-                            return
-                        end
-                        dropped=dropped+(record.dropped or 0)
-                        if record.phase=="waiting-pickup" then
-                            table.insert(pendingSources,{entry=entry,record=record})
-                        end
-                    end
+    local function openChest(chest)
+        local prompt=chest:FindFirstChildOfClass("ProximityPrompt")
+        if prompt then fireproximityprompt(prompt) end
+    end
+    local function permissionsReady(now)
+        if not permissionState then
+            if now-(active.lastPermissionRead or -10)>2 then
+                active.lastPermissionRead=now
+                R.get(R.RequestPermissionSummary):FireServer()
+            end
+            control.status="Reading island/chest permissions"
+            return false
+        end
+        local sources=active.request.sources or {{userId=active.request.sourceId}}
+        local roles={}
+        for _,entry in ipairs(permissionState.roles or {}) do roles[entry.userId]=entry.role end
+        local action=nil
+        for _,entry in ipairs(sources) do
+            if roles[entry.userId]~="TrustedBuilder" then
+                action=function()R.get(R.RequestFriendAction):FireServer("SetRole",entry.userId,"TrustedBuilder")end
+                break
+            end
+        end
+        if not action then
+            for key in pairs(config.Permission.StorageToggles) do
+                if not permissionState.storage or permissionState.storage[key]~=true then
+                    action=function()R.get(R.RequestPermissionToggle):FireServer("Storage",key,true)end
+                    break
                 end
             end
-            source={Name=tostring(#request.sources) .. " alts"}
-            other={token=request.token,dropped=dropped,phase=allWaiting and "waiting-pickup" or "dropping"}
-        else
-            source=Players:GetPlayerByUserId(request.sourceId)
-            other=peer(request.sourceId)
-            if not source or not fresh(other) or other.session~=request.altSession then
-                finish("error","Alt disconnected; transfer stopped")
-                return
-            end
-            if other.token==request.token and (other.phase=="error" or other.phase=="cancelled") then
-                finish("error",other.status or "Alt stopped")
-                return
+        end
+        if not action then
+            for key,def in pairs(config.Permission.IslandToggles) do
+                if not def.deferred and (not permissionState.island or permissionState.island[key]~=true) then
+                    action=function()R.get(R.RequestPermissionToggle):FireServer("Island",key,true)end
+                    break
+                end
             end
         end
-        local there, _, islandOrigin = atMainIsland(root)
+        if action then
+            control.status="Granting participating alts full island and chest permissions"
+            if now-(active.lastPermissionWrite or -10)>1.1 then
+                active.lastPermissionWrite=now
+                action()
+                R.get(R.RequestPermissionSummary):FireServer()
+            end
+            return false
+        end
+        return true
+    end
+    local function mainStep(root,now)
+        local request=active.request
+        active.completedSources=active.completedSources or {}
+        active.allocatedCounts=active.allocatedCounts or {}
+        local sources=request.sources or {{userId=request.sourceId,name=request.sourceName,session=request.altSession}}
+        local records={}
+        local transferred=0
+        for _,entry in ipairs(sources) do
+            local completed=active.completedSources[tostring(entry.userId)]
+            if completed then transferred=transferred+completed.dropped
+            else
+                local record=peer(entry.userId)
+                if not fresh(record) or record.session~=entry.session then
+                    active.ready=false
+                    control.status="Waiting for " .. tostring(entry.name) .. "; no items will be dropped"
+                    return
+                end
+                if record.token==request.token then
+                    if record.phase=="cancelled" then
+                        finish("error",entry.name .. " cancelled its deposit")
+                        return
+                    end
+                    transferred=transferred+(record.dropped or 0)
+                    records[entry.userId]=record
+                end
+            end
+        end
+        local there=atMainIsland(root)
         if not there then
-            active.holdCF = nil
-            active.ready = false
-            control.status = "Returning RobotTifaski to home island"
-            if now - active.lastTravel > 3 then
-                active.lastTravel = now
+            active.ready=false
+            active.holdCF=nil
+            control.status="Returning to main island for chest deposits"
+            if now-active.lastTravel>3 then
+                active.lastTravel=now
                 R.get(R.RequestFriendAction):FireServer("Home")
             end
             return
         end
-        if root.Anchored then active.ready=false; return end
-        local point = islandOrigin + Vector3.new(0, 5, 0)
-        active.holdCF = CFrame.new(point)
-        root.CFrame = active.holdCF
-        root.AssemblyLinearVelocity = Vector3.zero
-        active.ready = true
-        active.phase = "receiving"
-        local received=0
-        local gains={}
-        for key,count in pairs(inventory) do
-            local gain=math.max(0,count-(active.baseline[key] or 0))
-            gains[key]=gain
-            received=received+gain
-        end
-        active.received = received
-        local loose = looseNear(root)
-        if now - active.lastPickup >= 0.1 then
-            active.lastPickup = now
-            for i=1, math.min(8,#loose) do
-                local id=loose[i]:GetAttribute("EntityId")
-                if id then R.get(R.RequestPickup):FireServer(id) end
-            end
-        end
-        if request.parallel then
-            for _,pending in ipairs(pendingSources) do
-                local enough=true
-                local counts=pending.record.droppedCounts or {}
-                local total=0
-                for key,count in pairs(counts) do
-                    total=total+count
-                    if (gains[key] or 0)-(active.allocatedCounts[key] or 0)<count then enough=false end
-                end
-                if total~=(pending.record.dropped or 0) then enough=false end
-                if enough then
-                    for key,count in pairs(counts) do
-                        active.allocatedCounts[key]=(active.allocatedCounts[key] or 0)+count
-                    end
-                    active.completedSources[tostring(pending.entry.userId)]={dropped=total}
-                end
-            end
-            local completed=0
-            for _ in pairs(active.completedSources) do completed=completed+1 end
-            active.dropped=other.dropped or 0
-            control.status=string.format("%d / %d alts finished | dropped %d | received %d",completed,#request.sources,active.dropped,received)
-            if completed==#request.sources then
-                finish("complete",string.format("Complete: received %d items from %d alts",received,completed))
-            end
+        local chest=chestAt(active.chestKey)
+        if not chest then
+            active.ready=false
+            active.holdCF=nil
+            control.status="Waiting for a placed Large Chest on RobotTifaski's island"
             return
         end
-        if other.token == request.token then
-            active.dropped = other.dropped or 0
-            control.status = string.format("%s: dropped %d | received %d", source.Name, active.dropped, received)
-            if other.phase == "waiting-pickup" and #loose == 0 and received >= active.dropped then
-                finish("complete", string.format("Complete: received %d items from %s", received, source.Name))
+        active.chestKey=chest:GetAttribute("CellKey")
+        active.holdCF=CFrame.lookAt(chest.Position+Vector3.new(0,3,5),chest.Position)
+        if root.Anchored then active.ready=false;return end
+        root.CFrame=active.holdCF
+        root.AssemblyLinearVelocity=Vector3.zero
+        if not permissionsReady(now) then active.ready=false;return end
+        if not active.chestRequestedAt then
+            active.chestRequestedAt=now
+            active.lastChestOpen=now
+            openChest(chest)
+            active.ready=false
+            control.status="Reading Large Chest contents"
+            return
+        end
+        if now-(active.lastChestOpen or 0)>1 then active.lastChestOpen=now;openChest(chest) end
+        local state=storageStates[active.chestKey]
+        if not state or state.updated<active.chestRequestedAt then active.ready=false;return end
+        if not active.storageBaseline then
+            active.storageBaseline={}
+            for item,count in pairs(state.positive) do active.storageBaseline[item]=count end
+        end
+        active.ready=true
+        active.phase="receiving-chest"
+        local gains={}
+        local received=0
+        for item,count in pairs(state.positive) do
+            local gain=math.max(0,count-(active.storageBaseline[item] or 0))
+            gains[item]=gain
+            received=received+gain
+        end
+        active.received=received
+        for _,entry in ipairs(sources) do
+            local record=records[entry.userId]
+            if record and record.phase=="waiting-storage" then
+                local required={}
+                local total=0
+                for key,count in pairs(record.droppedCounts or {}) do
+                    local item=stackKey.item(key)
+                    required[item]=(required[item] or 0)+count
+                    total=total+count
+                end
+                local enough=total==(record.dropped or 0)
+                for item,count in pairs(required) do
+                    if (gains[item] or 0)-(active.allocatedCounts[item] or 0)<count then enough=false end
+                end
+                if enough then
+                    for item,count in pairs(required) do
+                        active.allocatedCounts[item]=(active.allocatedCounts[item] or 0)+count
+                    end
+                    active.completedSources[tostring(entry.userId)]={dropped=total}
+                end
             end
+        end
+        local completed=0
+        for _ in pairs(active.completedSources) do completed=completed+1 end
+        active.dropped=transferred
+        control.status=string.format("Large Chest: %d / %d alts finished | deposited %d | verified %d",completed,#sources,transferred,received)
+        if completed==#sources then
+            finish("complete",string.format("Chest deposits complete: %d items verified",received))
         end
     end
     local function altStep(root, now)
@@ -460,12 +530,22 @@ return function(farm, context)
         if not mainRecord.ready or mainRecord.token ~= request.token or not mainRoot or root.Anchored then
             control.status="Waiting for receiver to be ready"; return
         end
+        local chest=chestAt(mainRecord.chestKey)
+        if not chest then
+            active.phase="waiting-chest"
+            control.status="Waiting for the destination Large Chest"
+            return
+        end
         local ownEntry=sourceEntry(request,player.UserId)
         local angle=request.parallel and ((ownEntry.index-1)*math.pi*2/#request.sources) or 0
-        local offset=Vector3.new(math.cos(angle)*4,0,math.sin(angle)*4)
-        active.holdCF=CFrame.lookAt(mainRoot.Position+offset,mainRoot.Position)
+        local offset=Vector3.new(math.cos(angle)*4,2,math.sin(angle)*4)
+        active.holdCF=CFrame.lookAt(chest.Position+offset,chest.Position)
         root.CFrame=active.holdCF
         root.AssemblyLinearVelocity=Vector3.zero
+        if now-(active.lastChestOpen or -10)>2 then
+            active.lastChestOpen=now
+            openChest(chest)
+        end
         if not active.queue then
             active.limit=type(request.limit)=="table" and request.limit[tostring(player.UserId)] or request.limit
             active.queue,active.total=queueFor(request.scope,active.limit)
@@ -515,12 +595,12 @@ return function(farm, context)
             end
         end
         if not entry then
-            active.phase="waiting-pickup"
-            control.status="All items dropped; waiting for pickup acknowledgement"
+            active.phase="waiting-storage"
+            control.status="All non-tool items deposited; verifying chest receipt"
             return
         end
-        active.phase="dropping"
-        control.status=string.format("Dropping %s: %d / %d",stackKey.item(entry.key),dropped,active.total)
+        active.phase="depositing"
+        control.status=string.format("Depositing %s: %d / %d",stackKey.item(entry.key),dropped,active.total)
         if entry.lastCount ~= inventory[entry.key] then
             entry.lastCount=inventory[entry.key]
             entry.progressAt=now
@@ -530,19 +610,23 @@ return function(farm, context)
         end
         if now-(entry.progressAt or now)>10 then
             active.phase="blocked"
-            control.status="Waiting to drop " .. stackKey.item(entry.key) .. "; inventory is not empty"
+            control.status="Chest full or deposit blocked for " .. stackKey.item(entry.key) .. "; waiting for space"
             if now-(entry.retryAt or 0)>2 then
                 entry.retryAt=now
                 entry.awaitCount=nil
                 entry.progressAt=now
             else return end
         end
-        -- Small batches stay below the game's 50 loose-player-drop cap.
-        if #looseNear(mainRoot)>=12 or entry.awaitCount then return end
+        -- Whole-stack deposits, with no ground-drop fallback.
+        if entry.awaitCount then return end
         if now-(active.lastDrop or 0)>=0.07 then
             active.lastDrop=now
             entry.awaitCount=inventory[entry.key]
-            R.get(R.RequestDrop):FireServer(stackKey.item(entry.key),stackKey.rollOf(entry.key))
+            local taken=math.max(0,entry.initial-(inventory[entry.key] or 0))
+            local quantity=math.min(entry.amount-taken,inventory[entry.key] or 0,config.Storage.RequestCap)
+            if quantity>0 then
+                R.get(R.RequestStorageStore):FireServer(chest:GetAttribute("CellKey"),stackKey.item(entry.key),quantity)
+            end
         end
     end
     function control.step(root, now)
@@ -593,6 +677,14 @@ return function(farm, context)
         for _,c in ipairs(connections) do c:Disconnect() end
         if gui then pcall(gui.destroy) end
         pcall(function()write(clientPath,{updated=0,userId=player.UserId})end)
+    end
+    function control.getTransferPreview()
+        local queue,total=queueFor("All backpack items",nil)
+        local kept={}
+        for key,count in pairs(inventory) do
+            if isTool(stackKey.item(key)) and count>0 then kept[key]=count end
+        end
+        return {eligibleCount=total,items=queue,keptTools=kept}
     end
     function control.getInventorySummary()
         local total=0
