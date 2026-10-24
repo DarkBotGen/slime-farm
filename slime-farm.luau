@@ -21,7 +21,7 @@ local farm: any={enabled=true,collect=true,walkingOnly=true,undergroundOnly=fals
     antiAfk=true,antiAfkEvents=0}
 env.SlimeFarm=farm
 local navigationOK=pcall(function()
-    local factory=assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/90fba191b2982e731e08f3d9d1dd03ef93f80e03/navigation.luau")))()
+    local factory=assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/7f3b757b26d9a447ed23cb53bb58be0bbe070c73/navigation.luau")))()
     farm.navigation=factory(farm,{loadModule=loadModule,controllers=controllers,config=config})
 end)
 if not navigationOK then farm.navigationError="Navigation unavailable; farming paused";farm.enabled=false end
@@ -309,7 +309,7 @@ connect(RunService.Heartbeat,function()
     end
 end)
 local performanceOK=pcall(function()
-    local factory=assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/f5fa220cdd7bbc6301f4c03be5ae161db1c65da1/performance.luau")))()
+    local factory=assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/7f3b757b26d9a447ed23cb53bb58be0bbe070c73/performance.luau")))()
     farm.performance=factory(farm)
 end)
 if not performanceOK then farm.performanceError="Could not enable alt resource savings" end

@@ -8,7 +8,7 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm
 
 ## Walking and combat
 
-The character follows Roblox PathfindingService waypoints with Humanoid:MoveTo(), using normal jump waypoints and replanning when a path is blocked, a target moves, or movement stalls. There is one path computation in flight per client, with an 0.8-second minimum between computations. Unreachable targets are retried later.
+The character follows Roblox PathfindingService waypoints with Humanoid:MoveTo(), using normal jump waypoints and replanning when a path is blocked, a target moves, or movement stalls. There is one path computation in flight per client, with an 0.8-second minimum between computations. When the navmesh has no route, short ordinary MoveTo steps check ahead for obstacles, steep rises, and gaps. Unreachable targets are retried later.
 
 Sprinting uses the game's InputController.toggleSprintButton(), which sends the game's normal server-validated sprint request. The script does not change WalkSpeed, jump power, character position, velocity, or collisions. It does not load the underground guard. Normal player movement controls are suspended while following the route and restored on pause or stop.
 
@@ -24,7 +24,7 @@ Transfer travel is disabled in walking mode, and the GUI explains this. The reta
 
 ## Alt resource savings
 
-RobotTifaski (user ID 1407091060) is excluded before any graphics or FPS change. Other accounts use 3D rendering off, a 30 FPS cap, low engine quality, reduced textures/effects/shadows, and muted workspace audio. Rendering changes leave gameplay instances, normal character physics, and pathfinding intact. These changes cannot purge Roblox's asset cache or alter Studio-only streaming settings.
+RobotTifaski (user ID 1407091060) is excluded before any graphics or FPS change. Other accounts use 3D rendering enabled, a 30 FPS cap, low engine quality, reduced textures/effects/shadows, and muted workspace audio. Rendering changes leave gameplay instances, normal character physics, and pathfinding intact. These changes cannot purge Roblox's asset cache or alter Studio-only streaming settings.
 
 Stop all farming with getgenv().SlimeFarm.stop(). To restore an alt's graphics while leaving farming running, use getgenv().SlimeFarm.performance.stop().
 
