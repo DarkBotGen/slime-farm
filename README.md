@@ -26,13 +26,13 @@ The main script grants participating alts Trusted Builder and full available isl
 
 The main account is RobotTifaski, user ID 1407091060. Coordination requires the same server and shared local Real workspace; it does not control accounts on other computers.
 
-## Validation
-
 ## Discord gel rates
 
 Optional reporting reads `slime-farm-webhook/settings.json` from the local Real workspace. Keep credentials out of this repository. Settings use `enabled`, `url`, and `intervalSeconds` (minimum 60). All participating accounts must use the same Real workspace; they can farm in different servers. One elected account updates one Discord message with only combined pink, blue, green, and orange gels per hour.
 
 The report uses a rolling hour of positive inventory gains while farming inside HUB, excluding paused farming and chest transfers. Existing inventory is the baseline, not earnings. During the first hour, the observed session rate is extrapolated. Measurements survive reloads/rejoins locally. This measures observed farming gains; manually receiving gels while actively farming in HUB also counts. New computers require their own local settings.
+
+## Validation
 
 The chest supports bulk deposits. Tests covered a concurrent 22-item deposit, and a later 9-item deposit-and-auto-collect transfer with all nine verified in the main backpack. The collector also cleared pre-existing chest contents. Tool exclusion and independent alt completion were checked. The final manual-only controller and two-tab Luna GUI pass Real's script diagnostics. Long-duration idle prevention and every possible capacity scenario have not been exhaustively tested.
 
