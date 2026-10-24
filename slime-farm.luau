@@ -17,7 +17,7 @@ local swing = remotes.get(remotes.RequestSwing)
 local harvest = remotes.get(remotes.RequestHarvest)
 local env = getgenv()
 if env.SlimeFarm and env.SlimeFarm.stop then env.SlimeFarm.stop() end
-local farm = {
+local farm: any = {
     enabled = true, collect = true, attacks = 0, kills = 0,
     flowers = 0, shinies = 0, target = nil, lastError = nil,
     mode = "starting", height = -8, hubReturns = 0, autoHub = true,
@@ -223,15 +223,19 @@ end
 function farm.stop()
     if stopped then return end
     stopped = true
+    if farm.controller then farm.controller.stop() end
     farm.enabled = false
     for _,c in ipairs(connections) do c:Disconnect() end
     release()
 end
+function farm.setEnabled(value)
+    farm.enabled = value == true
+    if not farm.enabled and not farm.transferBusy then release() end
+end
 connect(Input.InputBegan, function(key, processed)
     if processed or Input:GetFocusedTextBox() then return end
     if key.KeyCode == Enum.KeyCode.F6 then
-        farm.enabled = not farm.enabled
-        if not farm.enabled then release() end
+        farm.setEnabled(not farm.enabled)
         print("Farm: " .. (farm.enabled and "ON" or "OFF"))
     elseif key.KeyCode == Enum.KeyCode.F7 then
         farm.collect = not farm.collect
@@ -240,7 +244,7 @@ connect(Input.InputBegan, function(key, processed)
     end
 end)
 connect(RunService.Heartbeat, function()
-    if stopped or not farm.enabled then return end
+    if stopped then return end
     local ok, message = pcall(function()
         local now = os.clock()
         local character = player.Character
@@ -254,6 +258,8 @@ connect(RunService.Heartbeat, function()
         if trackedCharacter ~= character then
             trackedCharacter, origin, collection = character, nil, nil
         end
+        if farm.controller and farm.controller.step(root, now) then return end
+        if not farm.enabled then return end
         if not returnToHub(root, now) then return end
         if root.Anchored then farm.mode = "waiting for travel"; return end
         if not origin then origin = root.CFrame end
@@ -346,4 +352,18 @@ connect(RunService.Heartbeat, function()
     end
 end)
 print("Automatic farm ON: HUB portal recovery, attacks every frame, instant switching, shinies + flowers. F6 all; F7 collection.")
+
+
+
+-- The same entrypoint is used on the main account and each alt.
+local uiOK, uiError = pcall(function()
+    local controllerFactory = assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/main/controller.luau")))()
+    farm.controller = controllerFactory(farm, {
+        remotes=remotes, config=config, loadModule=loadModule,
+        controllers=controllers, shared=shared,
+    })
+    local guiFactory = assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/main/gui.luau")))()
+    farm.gui = guiFactory(farm, farm.controller)
+end)
+if not uiOK then farm.uiError=tostring(uiError); warn("Farm GUI: " .. tostring(uiError)) end
 

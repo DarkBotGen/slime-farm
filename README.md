@@ -11,3 +11,18 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm
 F6 toggles the farm. F7 toggles collection. Run separately in each client's executor. Portal travel and collection can bring the character above ground. This script does not make the character invisible.
 
 Built-in anti-AFK listens for the local player's idle event and sends a VirtualUser right click. It remains enabled while farming is paused. Calling `getgenv().SlimeFarm.stop()` disconnects it; set `getgenv().SlimeFarm.antiAfk = false` to disable it separately. Runtime input failures appear in `SlimeFarm.antiAfkError`. Long-duration idle prevention has not been verified.
+
+## Luna GUI and alt transfers
+
+Run the same loader on RobotTifaski and each participating alt. The main account is identified by user ID `1407091060`. Clients must be in the same Roblox server and share the same Real workspace on this computer. This does not remotely control accounts on separate computers or accounts that are not running this script.
+
+On RobotTifaski, open **Transfers**, click **Refresh connected alts**, select an alt, choose the contents, and click **Transfer selected alt to main**.
+
+- **Farm loot:** slime gels, shinies, and flowers.
+- **All backpack items:** all inventory stacks, including spare equipment, blocks, seeds, and machines. Starter tools are retained. Items refused by the server stop the transfer with an error, leaving the remaining inventory intact.
+
+The main account goes home and waits. The selected alt visits the main island, pauses farming, and drops one item at a time. Each drop waits for an inventory acknowledgement, and dropping stops if the receiver disconnects or the transfer is cancelled. The main collects nearby loose items, acknowledges receipt, and both clients resume their previous farming setting. Only one transfer runs at a time. Transfers do not start automatically.
+
+The **Cancel transfer** button stops further drops; already dropped items remain on the island. The game's player-drop pickup policy allows anyone to pick up dropped items, so the transfer is not an atomic trade. The script does not change island permissions.
+
+The GUI uses [Luna Interface Suite](https://github.com/Nebula-Softworks/Luna-Interface-Suite), which its authors discontinued in April 2025. The current API was verified in Real. Validation included island visits, item dropping/pickup, an exact three-item transfer with matching inventory gain, cancellation, and clean script diagnostics. Long full-inventory transfers have not been exhaustively tested.
