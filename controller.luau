@@ -155,6 +155,7 @@ return function(farm, context)
         return nil
     end
     function control.requestParallel(scope, testLimit)
+        if farm.undergroundOnly then return false,"Transfers blocked by strict underground mode" end
         if not isMain then return false, "Only RobotTifaski can start a group transfer" end
         if active then return false, "A transfer is already running" end
         if not inventoryReady then return false, "Waiting for inventory sync" end
@@ -541,6 +542,11 @@ return function(farm, context)
     end
     function control.step(root, now)
         if stopped then return false end
+        if farm.undergroundOnly then
+            control.status="Transfers blocked by strict underground mode"
+            if gui and now-lastUI>=1 then lastUI=now;pcall(gui.update) end
+            return false
+        end
         if not inventoryReady and now-lastSync>5 then lastSync=now; R.get(R.RequestSync):FireServer() end
         if now-lastPoll>=0.08 then
             lastPoll=now
