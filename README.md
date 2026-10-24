@@ -1,37 +1,33 @@
 # Slime farm
 
-Underground slime farming, automatic HUB portal return, shiny/flower collection, anti-AFK, and Large Chest deposits from alts.
+Two tabs only: **Autofarm** and **Transfer**.
 
 ```lua
 loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/main/slime-farm.luau"))()
 ```
 
-Run the same loader on RobotTifaski (user ID 1407091060) and every participating alt. They must be in the same Roblox server and share the same Real workspace on this computer.
+## Autofarm
 
-## Farming
+Toggle farming in the Autofarm tab. It keeps the existing underground slime farming, orange > pink > blue > green priority, event-driven target switching, HUB portal recovery, shiny/flower collection, and built-in anti-AFK. Server damage cooldowns still apply.
 
-Priority: orange, pink, blue, green. Target health reaching zero, target removal, and higher-priority spawns trigger immediate target selection. Attacks are sent every Heartbeat; server damage cooldowns still apply. F6 toggles farming, F7 toggles collection. Portal travel and collection can bring the character above ground; this does not make it invisible.
+## Manual transfer
 
-Anti-AFK listens for the player's idle event and uses VirtualUser. It stays enabled while farming is paused and disconnects when the script stops. Long-duration idle prevention has not been verified.
+There are **no automatic transfer timers, schedules, or saved scheduling settings**.
 
-## Chest transfers
+1. Join RobotTifaski and your alts to the same Roblox server.
+2. Run the script on each participating account in the same Real workspace.
+3. On RobotTifaski, open Transfer and press **TRANSFER ALL ALTS TO MAIN**.
 
-Place a Large Chest on RobotTifaski's island. On the main account open Transfers and press **BRING ALL ALTS + DEPOSIT IN CHEST**. Selected-alt transfers are also available. Automatic rounds run every 15 minutes by default, with optional concurrent depositing via **All alts deposit together**.
+The connected alts visit RobotTifaski's island and deposit whole stacks into its Large Chest. RobotTifaski automatically uses the chest's collect-all action throughout the transfer, moving the items into the main backpack and freeing chest space.
 
-The main account verifies/grants participating alts Trusted Builder roles, full available island permissions, and storage Deposit/View/Withdraw permissions. It then reads the chest contents and authorizes deposits. The currently placed chest at cell 0,1,-2 was tested. If multiple Large Chests exist, the script chooses the first by cell key and retains that destination during the round.
+Deposits prioritize orange gels, pink gels, blue gels, green gels, then remaining items. Weapons and tools (including buckets, plows, watering cans, and pollinators) remain on the alts. Each alt verifies its remaining eligible inventory and resumes farming independently after its deposits have been collected. No items are dropped on the ground.
 
-Alts visit the main island and deposit whole stacks using RequestStorageStore. There is **no ground-drop fallback** and the vending machine is not used or modified.
+The main script grants participating alts Trusted Builder and full available island/storage permissions during transfer setup. A Large Chest must be placed on the main island. The vending machine is not used or modified. Blocked deposits wait/retry; Cancel stops further transfers. Items already collected stay in the main backpack, and anything still in the chest remains there until collected.
 
-Order: orange gels, pink gels, blue gels, green gels, then other eligible items. Pickaxes, axes, swords, starter tools, buckets, plows, watering cans, and pollinators stay on the alts. The final inventory is refreshed and rescanned so leftover non-tool items are not silently skipped.
+The main account is RobotTifaski, user ID 1407091060. Coordination requires the same server and shared local Real workspace; it does not control accounts on other computers.
 
-Each alt independently resumes its previous farming setting after its eligible inventory is empty and the deposits are verified against chest updates. If the chest fills or a deposit is blocked, that alt waits and retries until space/access is available or the transfer is cancelled. Clearing items out of the chest can free space; receipt accounting tracks positive chest changes rather than just its net contents. Items stay in the chest; the script does not automatically withdraw them.
+## Validation
 
-The chest has 24 configured slots. Do not assume an unlimited number of different item types will fit. Server storage rules control capacity and quantities.
+The chest supports bulk deposits. Tests covered a concurrent 22-item deposit, and a later 9-item deposit-and-auto-collect transfer with all nine verified in the main backpack. The collector also cleared pre-existing chest contents. Tool exclusion and independent alt completion were checked. The final manual-only controller and two-tab Luna GUI pass Real's script diagnostics. Long-duration idle prevention and every possible capacity scenario have not been exhaustively tested.
 
-Cancel stops further deposits and clears the pending round queue. Deposited items remain in the chest. After a complete round, a new interval starts. The main client's script must remain running; interval preferences are saved locally, and the countdown restarts when the main reloads.
-
-## GUI and validation
-
-The GUI uses [Luna Interface Suite](https://github.com/Nebula-Softworks/Luna-Interface-Suite), discontinued by its authors in April 2025. Its current API has been tested in Real.
-
-Validation included full permission read-back for the three connected alts, a five-item bulk chest deposit, a concurrent three-alt chest transfer with 22 deposited and 22 verified items, tool-exclusion preview, independent alt completion, and clean script diagnostics. Long full-inventory/capacity scenarios have not been exhaustively tested.
+The UI uses [Luna Interface Suite](https://github.com/Nebula-Softworks/Luna-Interface-Suite), discontinued by its authors in April 2025.

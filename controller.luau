@@ -13,7 +13,6 @@ return function(farm, context)
     local clientPath = prefix .. "client-" .. player.UserId .. ".json"
     local mainPath = prefix .. "client-" .. mainId .. ".json"
     local requestPath = prefix .. "request.json"
-    local settingsPath = "slime-farm-control/auto-transfer-" .. mainId .. ".json"
     local session = Http:GenerateGUID(false)
     local inventory, inventoryReady = {}, false
     local inventoryVersion = 0
@@ -35,44 +34,6 @@ return function(farm, context)
     end
     local function write(path, value)
         writefile(path, Http:JSONEncode(value))
-    end
-    local settings = read(settingsPath) or {}
-    local savedInterval = tonumber(settings.intervalMinutes) or 15
-    local auto = {
-        enabled = isMain and settings.enabled ~= false,
-        parallel = settings.parallel == true,
-        intervalMinutes = math.clamp(savedInterval, 1, 1440),
-        queue = {}, roundRunning = false, lastResult = "No round yet",
-    }
-    auto.nextAt = os.time() + math.floor(auto.intervalMinutes * 60)
-    control.auto = auto
-    local function saveAuto()
-        if isMain then
-            write(settingsPath, {enabled=auto.enabled, intervalMinutes=auto.intervalMinutes, parallel=auto.parallel})
-        end
-    end
-    function control.setAutoEnabled(enabled)
-        auto.enabled = isMain and enabled == true
-        if not auto.enabled then
-            table.clear(auto.queue)
-            auto.roundRunning = false
-        end
-        auto.nextAt = os.time() + math.floor(auto.intervalMinutes * 60)
-        saveAuto()
-    end
-    function control.setParallel(value)
-        auto.parallel = value == true
-        saveAuto()
-    end
-    function control.setAutoInterval(value)
-        local minutes = tonumber(value)
-        if not minutes or minutes < 1 or minutes > 1440 then
-            return false, "Enter a transfer interval between 1 and 1440 minutes"
-        end
-        auto.intervalMinutes = minutes
-        auto.nextAt = os.time() + math.floor(minutes * 60)
-        saveAuto()
-        return true
     end
     local function snapshot()
         local copy = {}
@@ -148,9 +109,6 @@ return function(farm, context)
         farm.target = nil
     end
     function control.cancel()
-        table.clear(auto.queue)
-        auto.roundRunning = false
-        auto.nextAt = os.time() + math.floor(auto.intervalMinutes * 60)
         if active and isMain then
             active.request.cancelled = true
             write(requestPath, active.request)
@@ -186,28 +144,6 @@ return function(farm, context)
         end
         return result,total
     end
-    function control.requestTransfer(altName, scope, testLimit)
-        if not isMain then return false, "Start transfers from RobotTifaski's GUI" end
-        if active then return false, "A transfer is already running" end
-        if not inventoryReady then return false, "Waiting for inventory sync" end
-        local account = Players:FindFirstChild(altName or "")
-        local record = account and peer(account.UserId)
-        if not account or account.UserId == mainId or not fresh(record) or not record.inventoryReady then
-            return false, "Selected alt must run this script in the same server and Real workspace"
-        end
-        local request = {
-            token = Http:GenerateGUID(false), jobId = game.JobId, mainId = mainId,
-            mainSession = session, altSession = record.session, sourceId = account.UserId,
-            sourceName = account.Name, scope = scope or "Farm loot", created = os.time(),
-            expires = os.time() + 30, limit = testLimit,
-        }
-        active = {request=request, phase="travelling", started=os.clock(), lastTravel=-10,
-            lastPickup=0, dropped=0, received=0, baseline=snapshot(), ready=false}
-        farm.transferBusy = true
-        control.status = "Going home; waiting for " .. account.Name
-        write(requestPath, request)
-        return true
-    end
     local function sourceEntry(request, userId)
         if request.parallel then
             for _, source in ipairs(request.sources or {}) do
@@ -242,48 +178,6 @@ return function(farm, context)
         control.status="Going home; gathering " .. #sources .. " alts"
         write(requestPath,request)
         return true
-    end
-    function control.runAutoRound()
-        if not isMain then return false, "Only the main account schedules transfers" end
-        if active or auto.roundRunning then return false, "A transfer round is already running" end
-        local names = control.listAlts()
-        if auto.parallel and #names>0 then
-            local ok,message=control.requestParallel("All backpack items")
-            if not ok then
-                auto.nextAt=os.time()+math.floor(auto.intervalMinutes*60)
-                auto.lastResult=tostring(message)
-                return false,message
-            end
-            auto.queue={}
-            auto.roundRunning=true
-            auto.lastResult="Concurrent round started: " .. #names .. " alts"
-            return true
-        end
-        auto.queue = names
-        auto.roundRunning = #names > 0
-        auto.nextAt = os.time() + math.floor(auto.intervalMinutes * 60)
-        if #names == 0 then
-            auto.lastResult = "No connected alts; waiting for the next interval"
-            return false, auto.lastResult
-        end
-        auto.lastResult = "Round started: " .. #names .. " connected alts"
-        return true
-    end
-    local function automaticTransfers()
-        if not isMain or not inventoryReady or active then return end
-        if auto.roundRunning then
-            if #auto.queue > 0 then
-                local name = table.remove(auto.queue, 1)
-                local ok, message = control.requestTransfer(name, "All backpack items")
-                if not ok then auto.lastResult = name .. ": " .. tostring(message) end
-            else
-                auto.roundRunning = false
-                auto.nextAt = os.time() + math.floor(auto.intervalMinutes * 60)
-                auto.lastResult = "Round complete; farming until the next interval"
-            end
-        elseif auto.enabled and os.time() >= auto.nextAt then
-            control.runAutoRound()
-        end
     end
     table.insert(connections, R.get(R.InventoryChanged).OnClientEvent:Connect(function(a1, _, _, _, _, _, a7)
         if type(a1) == "table" then
@@ -436,16 +330,32 @@ return function(farm, context)
         if not state or state.updated<active.chestRequestedAt then active.ready=false;return end
         if not active.storageBaseline then
             active.storageBaseline={}
+            active.initialChestContents={}
+            for item,count in pairs(state.contents) do active.initialChestContents[item]=count end
             for item,count in pairs(state.positive) do active.storageBaseline[item]=count end
         end
         active.ready=true
         active.phase="receiving-chest"
+        local backpackGains={}
+        for key,count in pairs(inventory) do
+            local item=stackKey.item(key)
+            local gain=math.max(0,count-(active.baseline[key] or 0))
+            backpackGains[item]=(backpackGains[item] or 0)+gain
+        end
         local gains={}
         local received=0
         for item,count in pairs(state.positive) do
-            local gain=math.max(0,count-(active.storageBaseline[item] or 0))
+            local deposited=math.max(0,count-(active.storageBaseline[item] or 0))
+            local collected=math.max(0,(backpackGains[item] or 0)-(active.initialChestContents[item] or 0))
+            local gain=math.min(deposited,collected)
             gains[item]=gain
             received=received+gain
+        end
+        local chestEmpty=true
+        for _,count in pairs(state.contents) do if count>0 then chestEmpty=false;break end end
+        if not chestEmpty and now-(active.lastCollectAll or -10)>0.25 then
+            active.lastCollectAll=now
+            R.get(R.RequestStorageWithdrawAll):FireServer(active.chestKey)
         end
         active.received=received
         for _,entry in ipairs(sources) do
@@ -473,9 +383,9 @@ return function(farm, context)
         local completed=0
         for _ in pairs(active.completedSources) do completed=completed+1 end
         active.dropped=transferred
-        control.status=string.format("Large Chest: %d / %d alts finished | deposited %d | verified %d",completed,#sources,transferred,received)
-        if completed==#sources then
-            finish("complete",string.format("Chest deposits complete: %d items verified",received))
+        control.status=string.format("Large Chest: %d / %d alts finished | deposited %d | collected %d",completed,#sources,transferred,received)
+        if completed==#sources and chestEmpty then
+            finish("complete",string.format("Chest transfer complete: %d items collected by main",received))
         end
     end
     local function altStep(root, now)
@@ -648,7 +558,6 @@ return function(farm, context)
                     farm.transferBusy=true
                 end
             end
-            automaticTransfers()
             if active then
                 if isMain then mainStep(root,now) else altStep(root,now) end
             end
