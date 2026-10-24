@@ -390,7 +390,7 @@ local uiOK, uiError = pcall(function()
         remotes=remotes, config=config, loadModule=loadModule,
         controllers=controllers, shared=shared,
     })
-    local guiFactory = assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/cecd01ed31882947c4ee84a5f834ecb62b598768/gui.luau")))()
+    local guiFactory = assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/bcb2050f089fff4dafd5bdee33436abc4ae9cf2d/gui.luau")))()
     farm.gui = guiFactory(farm, farm.controller)
 end)
 if not uiOK then farm.uiError=tostring(uiError); warn("Farm GUI: " .. tostring(uiError)) end
