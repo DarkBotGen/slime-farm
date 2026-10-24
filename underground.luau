@@ -33,7 +33,7 @@ return function(farm, config)
     local function ceiling(position)
         local plane=surface(position)
         if not plane then policy.status="Unknown terrain; movement blocked";return nil end
-        local key=math.floor(position.X/8)..":"..math.floor(position.Z/8)..":"..plane
+        local key=math.floor(position.X/2)..":"..math.floor(position.Z/2)..":"..plane
         local entry=cache[key]
         if not entry or os.clock()-entry.at>0.5 then
             local params=RaycastParams.new()
@@ -47,8 +47,19 @@ return function(farm, config)
             if guardians then table.insert(exclude,guardians) end
             params.FilterDescendantsInstances=exclude
             params.RespectCanCollide=true
-            local hit=workspace:Raycast(Vector3.new(position.X,plane+0.5,position.Z),Vector3.new(0,-192,0),params)
-            entry={at=os.clock(),y=if hit then math.min(plane,hit.Position.Y) else plane}
+            params.IgnoreWater=true
+            local relative=position-config.Hub.Origin
+            local half=config.Hub.SizeStuds*0.5
+            local onHub=math.abs(relative.X)<=half.X+40 and math.abs(relative.Z)<=half.Z+40
+            if onHub then
+                -- HUB has raised terrain (observed Y=210); the origin Y=200 is
+                -- not its floor. Probe actual Terrain rather than foliage/roofs.
+                params.FilterType=Enum.RaycastFilterType.Include
+                params.FilterDescendantsInstances={workspace.Terrain}
+            end
+            local from=Vector3.new(position.X,plane+(if onHub then 128 else 0.5),position.Z)
+            local hit=workspace:Raycast(from,Vector3.new(0,-384,0),params)
+            entry={at=os.clock(),y=if hit then hit.Position.Y else plane}
             -- Keep the cache bounded during long sessions.
             local count=0
             for k,v in pairs(cache) do
