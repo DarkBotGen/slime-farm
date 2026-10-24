@@ -39,7 +39,9 @@ return function(farm,control)
     farmTab:CreateToggle({Name="Autofarm",CurrentValue=farm.enabled,Callback=function(value)farm.setEnabled(value)end})
     local farmStatus=farmTab:CreateParagraph({Title="Status",Text="Starting..."})
     local transferTab=window:CreateTab({Name="Transfer",Icon="swap_horiz",ImageSource="Material",ShowTitle=true})
-    if control.isMain then
+    if farm.walkingOnly then
+        transferTab:CreateParagraph({Title="Walking mode",Text="Chest transfer travel is disabled. This version walks above ground and does not use the old transfer teleports."})
+    elseif control.isMain then
         transferTab:CreateButton({
             Name="TRANSFER ALL ALTS TO MAIN",
             Description="Bring connected alts to your island, deposit all non-tool items into the Large Chest, and collect everything into RobotTifaski's backpack.",

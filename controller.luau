@@ -155,6 +155,7 @@ return function(farm, context)
         return nil
     end
     function control.requestParallel(scope, testLimit)
+        if farm.walkingOnly then return false,"Transfer travel is disabled in walking mode" end
         if farm.undergroundOnly then return false,"Transfers blocked by strict underground mode" end
         if not isMain then return false, "Only RobotTifaski can start a group transfer" end
         if active then return false, "A transfer is already running" end
@@ -542,6 +543,11 @@ return function(farm, context)
     end
     function control.step(root, now)
         if stopped then return false end
+        if farm.walkingOnly then
+            control.status="Transfer travel is disabled in walking mode"
+            if gui and now-lastUI>=1 then lastUI=now;pcall(gui.update) end
+            return false
+        end
         if farm.undergroundOnly then
             control.status="Transfers blocked by strict underground mode"
             if gui and now-lastUI>=1 then lastUI=now;pcall(gui.update) end
