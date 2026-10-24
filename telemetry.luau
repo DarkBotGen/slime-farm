@@ -5,6 +5,7 @@ return function(farm, context)
     local R, config = context.remotes, context.config
     local ids = {"PinkSlimeGel", "BlueSlimeGel", "SlimeGel", "OrangeSlimeGel"}
     local names = {"Pink", "Blue", "Green", "Orange"}
+    local prices = {40000,1500,1500,10000}
     local prefix = "slime-farm-webhook/"
     local directory = prefix .. "accounts/" .. tostring(game.GameId) .. "/"
     local path = directory .. player.UserId .. ".json"
@@ -74,19 +75,22 @@ return function(farm, context)
         if not settings or not settings.enabled then telemetry.status="Disabled";return end
         local endpoint = tostring(settings.url or ""):match("^(https://discord%.com/api/webhooks/%d+/[%w_-]+)")
         if not endpoint then telemetry.status="Webhook missing";return end
-        local records, leader = {}, math.huge
+        local records, leader, activeAccounts = {}, math.huge, 0
         for _,file in ipairs(listfiles(directory)) do
             local entry = read(file)
             if entry and type(entry.userId)=="number" then
                 table.insert(records,entry)
                 if timestamp-(tonumber(entry.updated) or 0)<25 then
+                    activeAccounts+=1
                     if entry.userId==1407091060 then leader=1407091060
                     elseif leader~=1407091060 then leader=math.min(leader,entry.userId) end
                 end
             end
         end
         telemetry.rates=aggregate(records,timestamp)
-        telemetry.accounts=#records
+        telemetry.accounts=activeAccounts
+        telemetry.moneyPerHour=0
+        for i=1,4 do telemetry.moneyPerHour+=telemetry.rates[i]*prices[i] end
         if leader~=player.UserId then telemetry.status="Reporting through leader";return end
         local statePath=prefix .. "message.json"
         local state=read(statePath) or {}
@@ -98,10 +102,57 @@ return function(farm, context)
         for i,name in ipairs(names) do
             table.insert(lines,string.format("%s gels: **%.0f / hour**",name,telemetry.rates[i]))
         end
+        table.insert(lines,string.format("Estimated sale value: **%.0f coins / hour**",telemetry.moneyPerHour))
+        local payload: any={content=table.concat(lines,"\n"),allowed_mentions={parse={}}}
+        local contentType="application/json"
+        local body
+        -- A single local helper draws the chart once a minute for all clients.
+        -- Only numeric yield data goes to loopback; credentials stay in this process.
+        local chartOK=pcall(function()
+            local beginning=timestamp
+            for _,entry in ipairs(records) do beginning=math.min(beginning,tonumber(entry.startedAt) or timestamp) end
+            beginning=math.max(timestamp-3600,beginning)
+            local series={}
+            local firstMinute=math.floor(beginning/60)*60
+            local lastMinute=math.floor(timestamp/60)*60
+            for minute=firstMinute,lastMinute,60 do
+                local values={0,0,0,0}
+                for _,entry in ipairs(records) do
+                    for bucket,gains in pairs(entry.buckets or {}) do
+                        local stamp=tonumber(bucket) or 0
+                        if stamp>=minute and stamp<minute+60 and stamp>timestamp-3600 then
+                            for i=1,4 do values[i]+=math.max(0,tonumber(gains[i]) or 0) end
+                        end
+                    end
+                end
+                local seconds=math.max(1,math.min(timestamp,minute+60)-math.max(beginning,minute))
+                for i=1,4 do values[i]=values[i]*3600/seconds end
+                table.insert(series,values)
+            end
+            local result=request({Url="http://127.0.0.1:17384/render",Method="POST",
+                Headers={["Content-Type"]="application/json"},
+                Body=Http:JSONEncode({rates=telemetry.rates,series=series,timestamp=timestamp,start=beginning,accounts=activeAccounts})})
+            assert(type(result)=="table" and result.StatusCode==200,"Renderer unavailable")
+            local png=base64decode(Http:JSONDecode(result.Body).png)
+            assert(#png>8 and png:sub(2,4)=="PNG","Invalid PNG")
+            payload.attachments={{id=0,filename="slime-rates.png"}}
+            payload.embeds={{title="Slime farming dashboard",color=11462769,image={url="attachment://slime-rates.png"}}}
+            local boundary="SlimeChart" .. Http:GenerateGUID(false):gsub("-","")
+            contentType="multipart/form-data; boundary=" .. boundary
+            body="--"..boundary.."\r\nContent-Disposition: form-data; name=\"payload_json\"\r\nContent-Type: application/json\r\n\r\n"
+                ..Http:JSONEncode(payload).."\r\n--"..boundary.."\r\nContent-Disposition: form-data; name=\"files[0]\"; filename=\"slime-rates.png\"\r\nContent-Type: image/png\r\n\r\n"
+                ..png.."\r\n--"..boundary.."--\r\n"
+        end)
+        telemetry.chartAvailable=chartOK
+        if not chartOK then
+            payload.attachments=nil
+            payload.embeds=nil
+            body=Http:JSONEncode(payload)
+            contentType="application/json"
+        end
         local url=endpoint .. (if state.messageId then "/messages/" .. tostring(state.messageId) else "?wait=true")
         local ok,response=pcall(request, {Url=url,Method=if state.messageId then "PATCH" else "POST",
-            Headers={["Content-Type"]="application/json"},
-            Body=Http:JSONEncode({content=table.concat(lines,"\n"),allowed_mentions={parse={}}})})
+            Headers={["Content-Type"]=contentType},Body=body})
         if stopped then return end
         if not ok or type(response)~="table" then telemetry.status="Network error";retryAt=timestamp+60;return end
         local code=response.StatusCode
