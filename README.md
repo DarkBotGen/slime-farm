@@ -8,11 +8,19 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm
 
 ## Autofarm
 
-Toggle farming in the Autofarm tab. It keeps the existing underground slime farming, orange > pink > blue > green priority, event-driven target switching, HUB portal recovery, shiny/flower collection, and built-in anti-AFK. Server damage cooldowns still apply.
+### Strict underground movement
+
+The current loader enables a below-terrain movement guard with a minimum 12-stud root offset, increased for tall avatars/accessories. It uses mapped terrain and downward floor probes, stays upright, zeros velocity, and corrects positions on PreSimulation and Heartbeat. New characters are checked as their root appears; server-anchored characters cannot be moved until released. Pausing no longer returns the character to its original surface position, and idle characters are held below the mapped floor.
+
+Surface routes are deliberately blocked: no automatic HUB portal entry, no chest-transfer travel, no above-ground shiny/flower visits, and no four-stud attack fallback. Start in HUB to farm. Pickups are attempted from below; rejected interactions are skipped/retried. Server attack and interaction ranges still apply, so greater depth can reduce or stop farming. Unknown terrain blocks scripted movement. Transfer controls report that strict mode blocks transfers.
+
+This constrains the farm's own movement; it cannot prevent or conceal a server-controlled spawn, teleport, correction, or respawn. It is not invisibility, report prevention, or ban protection. The strict changes passed Real's diagnostics but were not deployed or tested on live accounts after the reported bans. The retained transfer implementation is blocked in this mode.
+
+Toggle farming in the Autofarm tab. Strict below-terrain movement keeps orange > pink > blue > green priority, event-driven target switching and built-in anti-AFK. HUB portal travel is blocked; shiny/flower collection is attempted from below. Server damage cooldowns and range limits still apply.
 
 ## Manual transfer
 
-There are **no automatic transfer timers, schedules, or saved scheduling settings**.
+Strict underground mode currently blocks transfers before any travel begins. The existing chest-transfer implementation is retained for future changes; the steps below describe that implementation, not an action available in strict mode. There are **no automatic transfer timers, schedules, or saved scheduling settings**.
 
 1. Join RobotTifaski and your alts to the same Roblox server.
 2. Run the script on each participating account in the same Real workspace.

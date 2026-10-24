@@ -20,10 +20,19 @@ if env.SlimeFarm and env.SlimeFarm.stop then env.SlimeFarm.stop() end
 local farm: any = {
     enabled = true, collect = true, attacks = 0, kills = 0,
     flowers = 0, shinies = 0, target = nil, lastError = nil,
-    mode = "starting", height = -8, hubReturns = 0, autoHub = true,
+    mode = "starting", height = -12, hubReturns = 0, autoHub = false,
+    undergroundOnly = true,
     antiAfk = true, antiAfkEvents = 0, antiAfkError = nil
 }
 env.SlimeFarm = farm
+local undergroundOK = pcall(function()
+    local factory=assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/cc065b7f1cc0adecc3b590c45c91e8a7dcf2daeb/underground.luau")))()
+    farm.underground=factory(farm,config)
+end)
+if not undergroundOK then farm.undergroundError="Underground guard unavailable; farming blocked" end
+local function moveBelow(root, position, facing)
+    return farm.underground and farm.underground.move(root,position,facing) or false
+end
 local connections = {}
 local enemies = {}
 local flowers = {}
@@ -41,10 +50,6 @@ local lastProgressAt = 0
 local blocked = setmetatable({}, {__mode = "k"})
 local targetHealthConnection = nil
 
-local portal = nil
-local portalScanAt = 0
-local portalStartedAt = 0
-local returningToHub = false
 local lastWarningAt = 0
 local function inHub(position)
     local relative = position - config.Hub.Origin
@@ -53,53 +58,11 @@ local function inHub(position)
         and math.abs(relative.Z) <= half.Z + 40
         and math.abs(relative.Y) <= 160
 end
-local function returnToHub(root, now)
-    if inHub(root.Position) then
-        if returningToHub then
-            farm.hubReturns = farm.hubReturns + 1
-            farm.target = nil
-            collection = nil
-            origin = root.CFrame
-        end
-        returningToHub = false
-        portal = nil
-        return true
-    end
-    if not farm.autoHub then return false end
-    returningToHub = true
+local function returnToHub(root, _now)
+    if inHub(root.Position) then return true end
     farm.target = nil
     collection = nil
-    farm.mode = "finding HUB portal"
-    if now - portalScanAt >= 0.5 or not portal or not portal:IsDescendantOf(workspace) then
-        portalScanAt = now
-        local bestDistance = math.huge
-        portal = nil
-        for _, island in ipairs(workspace:GetChildren()) do
-            if typeof(island:GetAttribute("IslandOrigin")) == "Vector3" then
-                for _, candidate in ipairs(island:GetChildren()) do
-                    if candidate.Name == "HUB" or candidate:GetAttribute("PortalRotation") ~= nil then
-                        local touch = candidate:FindFirstChild("TouchPart", true)
-                        if touch and touch:IsA("BasePart") then
-                            local distance = (touch.Position - root.Position).Magnitude
-                            if distance < bestDistance then
-                                portal, bestDistance = touch, distance
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-    if portal then
-        farm.mode = "entering HUB portal"
-        if now - portalStartedAt > 4 then portalStartedAt = now end
-        -- Briefly leave the trigger between attempts to generate a fresh touch.
-        local offset = now - portalStartedAt < 0.15 and portal.CFrame.LookVector * 6 or Vector3.zero
-        if not root.Anchored then
-            root.CFrame = portal.CFrame + offset
-            root.AssemblyLinearVelocity = Vector3.zero
-        end
-    end
+    farm.mode = "Waiting for HUB; surface portal travel blocked"
     return false
 end
 local function connect(signal, callback)
@@ -163,7 +126,7 @@ local function selectTarget(root, now)
     end
     previousHP = best and health(best) or nil
     lastProgressAt = now
-    farm.height = -8
+    farm.height = -12
     return best
 end
 local function registerFlower(part)
@@ -234,12 +197,6 @@ local function nextCollection(root, now)
     return best
 end
 local function release()
-    local character = player.Character
-    local root = character and character:FindFirstChild("HumanoidRootPart")
-    if root and origin and character == trackedCharacter then
-        root.CFrame = origin
-        root.AssemblyLinearVelocity = Vector3.zero
-    end
     origin = nil
     collection = nil
     farm.target = nil
@@ -255,6 +212,7 @@ function farm.stop()
     if targetHealthConnection then targetHealthConnection:Disconnect();targetHealthConnection=nil end
     for _,c in ipairs(connections) do c:Disconnect() end
     release()
+    if farm.underground then farm.underground.stop() end
 end
 function farm.setEnabled(value)
     farm.enabled = value == true
@@ -286,6 +244,7 @@ connect(RunService.Heartbeat, function()
         if trackedCharacter ~= character then
             trackedCharacter, origin, collection = character, nil, nil
         end
+        if not farm.underground then farm.mode="Underground guard unavailable; farming blocked";return end
         if farm.controller and farm.controller.step(root, now) then return end
         if not farm.enabled then return end
         if not returnToHub(root, now) then return end
@@ -319,7 +278,7 @@ connect(RunService.Heartbeat, function()
                 lastDamageAt, lastProgressAt = now, now
             end
             previousHP = hp
-            if now - lastProgressAt > 1.2 and not collection then farm.height = -4 end
+            -- Never move closer to the surface when attacks are rejected.
             if now - lastProgressAt > 7 and not collection then
                 blocked[target] = now + 5
                 target = selectTarget(root, now)
@@ -344,8 +303,11 @@ connect(RunService.Heartbeat, function()
                 retryAfter[item.object] = now + 5
                 collection = nil
             else
-                root.CFrame = CFrame.new(item.part.Position + Vector3.new(0, 3, 3), item.part.Position)
-                root.AssemblyLinearVelocity = Vector3.zero
+                if not moveBelow(root,item.part.Position+Vector3.new(0,-12,0),item.part.Position) then
+                    retryAfter[item.object]=now+5
+                    collection=nil
+                    return
+                end
                 farm.mode = "collecting " .. item.kind
                 if not item.sent and now - item.started >= 0.15 then
                     item.sent = true
@@ -358,8 +320,7 @@ connect(RunService.Heartbeat, function()
             farm.mode = target and "attacking" or "waiting for spawns"
             if target then
                 local point = target.Position + Vector3.new(0, farm.height, 0.1)
-                root.CFrame = CFrame.lookAt(point, target.Position)
-                root.AssemblyLinearVelocity = Vector3.zero
+                if not moveBelow(root,point,target.Position) then farm.mode="Underground movement blocked";return end
             end
         end
         if target and target.Parent then
@@ -378,7 +339,7 @@ connect(RunService.Heartbeat, function()
         end
     end
 end)
-print("Automatic farm ON: HUB portal recovery, attacks every frame, instant switching, shinies + flowers. F6 all; F7 collection.")
+print("Strict underground farm: surface portal/transfer travel blocked; interactions attempted from below. F6 all; F7 collection.")
 
 
 
@@ -389,7 +350,7 @@ local performanceOK = pcall(function()
 end)
 if not performanceOK then farm.performanceError="Could not enable low-resource mode" end
 local uiOK, uiError = pcall(function()
-    local controllerFactory = assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/cecd01ed31882947c4ee84a5f834ecb62b598768/controller.luau")))()
+    local controllerFactory = assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/DarkBotGen/slime-farm/cc065b7f1cc0adecc3b590c45c91e8a7dcf2daeb/controller.luau")))()
     farm.controller = controllerFactory(farm, {
         remotes=remotes, config=config, loadModule=loadModule,
         controllers=controllers, shared=shared,
