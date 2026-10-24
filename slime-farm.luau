@@ -4,6 +4,7 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Input = game:GetService("UserInputService")
 local Tags = game:GetService("CollectionService")
+local VirtualUser = game:GetService("VirtualUser")
 local player = Players.LocalPlayer
 local loadModule: any = require
 local shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
@@ -19,7 +20,8 @@ if env.SlimeFarm and env.SlimeFarm.stop then env.SlimeFarm.stop() end
 local farm = {
     enabled = true, collect = true, attacks = 0, kills = 0,
     flowers = 0, shinies = 0, target = nil, lastError = nil,
-    mode = "starting", height = -8, hubReturns = 0, autoHub = true
+    mode = "starting", height = -8, hubReturns = 0, autoHub = true,
+    antiAfk = true, antiAfkEvents = 0, antiAfkError = nil
 }
 env.SlimeFarm = farm
 local connections = {}
@@ -105,6 +107,22 @@ local function connect(signal, callback)
     table.insert(connections, c)
     return c
 end
+-- Uses each client's own idle event; no focused-window or OS input dependency.
+-- Remains active while F6 pauses farming and disconnects with farm.stop().
+connect(player.Idled, function()
+    if stopped or not farm.antiAfk then return end
+    local ok, message = pcall(function()
+        VirtualUser:CaptureController()
+        VirtualUser:ClickButton2(Vector2.new(0, 0))
+    end)
+    if ok then
+        farm.antiAfkEvents = farm.antiAfkEvents + 1
+        farm.antiAfkError = nil
+    else
+        farm.antiAfkError = tostring(message)
+        warn("Anti-AFK input failed: " .. tostring(message))
+    end
+end)
 local function health(part)
     if not part.Parent then return 0 end
     local gui = part:FindFirstChild("Health")
